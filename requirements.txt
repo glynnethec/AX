@@ -1,0 +1,12 @@
+# Backend Server
+fastapi
+uvicorn
+pydantic
+
+# Integraciones de IA
+langchain-core
+langchain-groq
+
+# Utilidades
+python-dotenv
+requests
