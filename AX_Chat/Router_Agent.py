@@ -20,7 +20,7 @@ GROQ_API_KEY = os.getenv("GROQ_ROUTER_API_KEY") or os.getenv("GROQ_API_KEY")
 
 router_llm = ChatGroq(
     temperature=0.0,
-    model_name="llama-3.1-8b-instant",
+    model_name="openai/gpt-oss-20b",
     groq_api_key=GROQ_API_KEY
 )
 
