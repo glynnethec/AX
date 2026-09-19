@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from typing import List
 
 from AX_Chat.AX_Agent import run_ax_agent
+from AX_Voice.AX_Voice_Agent import run_ax_voice_agent
 from langchain_core.messages import HumanMessage, AIMessage
 
 app = FastAPI(title="AX Glynne Core", version="1.0.0")
@@ -39,6 +40,25 @@ async def process_chat(request: ChatRequest):
             raise HTTPException(status_code=400, detail="El historial está vacío.")
             
         ai_response = run_ax_agent(langchain_msgs)
+        return {"status": "success", "reply": ai_response}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error en el servidor: {str(e)}")
+
+@app.post("/api/voice_chat")
+async def process_voice_chat(request: ChatRequest):
+    try:
+        langchain_msgs = []
+        for msg in request.messages:
+            role = msg.role.lower()
+            if role == "user":
+                langchain_msgs.append(HumanMessage(content=msg.content))
+            elif role in ["ai", "assistant"]:
+                langchain_msgs.append(AIMessage(content=msg.content))
+                
+        if not langchain_msgs:
+            raise HTTPException(status_code=400, detail="El historial está vacío.")
+            
+        ai_response = run_ax_voice_agent(langchain_msgs)
         return {"status": "success", "reply": ai_response}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error en el servidor: {str(e)}")
