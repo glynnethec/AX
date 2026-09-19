@@ -28,7 +28,7 @@ GROQ_API_KEY = os.getenv("GROQ_RESPONDER_API_KEY") or os.getenv("GROQ_API_KEY")
 llm = ChatGroq(
     temperature=0.4,
     model_name="openai/gpt-oss-20b",
-    groq_api_key=GROQ_API_KEY
+    groq_api_key=GROQ_API_KEYs
 )
 
 def run_ax_agent(history: List[BaseMessage]) -> str:
