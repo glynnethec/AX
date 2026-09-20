@@ -3,6 +3,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List
+import base64
+import edge_tts
 
 from AX_Chat.AX_Agent import run_ax_agent
 from AX_Voice.AX_Voice_Agent import run_ax_voice_agent
@@ -58,8 +60,24 @@ async def process_voice_chat(request: ChatRequest):
         if not langchain_msgs:
             raise HTTPException(status_code=400, detail="El historial está vacío.")
             
+        # 1. Obtener la respuesta de texto del agente
         ai_response = run_ax_voice_agent(langchain_msgs)
-        return {"status": "success", "reply": ai_response}
+        
+        # 2. Generar el audio con edge-tts (voz de Dalia)
+        communicate = edge_tts.Communicate(ai_response, "es-MX-DaliaNeural")
+        audio_data = b""
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                audio_data += chunk["data"]
+                
+        # 3. Convertir el audio a base64
+        audio_base64 = base64.b64encode(audio_data).decode("utf-8")
+        
+        return {
+            "status": "success", 
+            "reply": ai_response,
+            "audio_base64": audio_base64
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error en el servidor: {str(e)}")
 

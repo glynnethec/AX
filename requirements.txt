@@ -10,3 +10,4 @@ langchain-groq
 # Utilidades
 python-dotenv
 requests
+edge-tts
