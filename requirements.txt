@@ -11,3 +11,4 @@ langchain-groq
 python-dotenv
 requests
 edge-tts
+elevenlabs

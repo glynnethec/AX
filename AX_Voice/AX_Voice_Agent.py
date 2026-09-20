@@ -59,6 +59,12 @@ def run_ax_voice_agent(history: List[BaseMessage]) -> str:
     if not SYSTEM_PROMPT:
         SYSTEM_PROMPT = "Eres un Ingeniero de Soluciones Operativas de GLYNNE. Tu objetivo exclusivo es diagnosticar, solucionar problemas y ejecutar tareas para el usuario. No ofrezcas descripciones corporativas a menos que se te pregunte explícitamente"
 
+    # Inyectar reglas estrictas para abaratar costos de Voice TTS
+    SYSTEM_PROMPT += "\n\n[REGLAS ESTRICTAS DE INTERACCIÓN POR VOZ]:\n"
+    SYSTEM_PROMPT += "1. TUS RESPUESTAS DEBEN SER EXTREMADAMENTE CORTAS. NUNCA superes las 2 oraciones breves (máximo 50 palabras por respuesta).\n"
+    SYSTEM_PROMPT += "2. SOLO puedes hablar sobre Glynne, su tecnología, o sus soluciones. Si el usuario pregunta cualquier otra cosa (recetas, clima, chistes, conocimientos generales), responde ÚNICAMENTE: 'Solo estoy autorizada para hablar sobre Glynne.'\n"
+    SYSTEM_PROMPT += "3. Sé directa, concisa y muy natural. No uses listas ni viñetas, habla como en una llamada telefónica casual.\n"
+
     # 4. Preparar historial limitando a los últimos 6 mensajes (3 turnos) para evitar lentitud
     MAX_HISTORY = 6
     if len(history) > MAX_HISTORY:

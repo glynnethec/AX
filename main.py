@@ -4,7 +4,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List
 import base64
-import edge_tts
+import os
+from elevenlabs.client import ElevenLabs
 
 from AX_Chat.AX_Agent import run_ax_agent
 from AX_Voice.AX_Voice_Agent import run_ax_voice_agent
@@ -63,12 +64,22 @@ async def process_voice_chat(request: ChatRequest):
         # 1. Obtener la respuesta de texto del agente
         ai_response = run_ax_voice_agent(langchain_msgs)
         
-        # 2. Generar el audio con edge-tts (voz de Dalia)
-        communicate = edge_tts.Communicate(ai_response, "es-MX-DaliaNeural")
-        audio_data = b""
-        async for chunk in communicate.stream():
-            if chunk["type"] == "audio":
-                audio_data += chunk["data"]
+        # 2. Generar el audio con ElevenLabs (Hiperrealista)
+        eleven_api_key = os.getenv("ELEVENLABS_API_KEY")
+        if not eleven_api_key:
+            raise HTTPException(status_code=500, detail="Falta ELEVENLABS_API_KEY en .env")
+            
+        client = ElevenLabs(api_key=eleven_api_key)
+        
+        # Usamos el ID de Sarah (EXAVITQu4vr4xnSDxMaL) que es gratuito
+        audio_generator = client.text_to_speech.convert(
+            text=ai_response,
+            voice_id="EXAVITQu4vr4xnSDxMaL", 
+            model_id="eleven_multilingual_v2"
+        )
+        
+        # Convertir el generador en bytes
+        audio_data = b"".join(audio_generator)
                 
         # 3. Convertir el audio a base64
         audio_base64 = base64.b64encode(audio_data).decode("utf-8")
@@ -82,4 +93,7 @@ async def process_voice_chat(request: ChatRequest):
         raise HTTPException(status_code=500, detail=f"Error en el servidor: {str(e)}")
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8001, reload=True)
+    import uvicorn
+    # Render asigna dinámicamente un puerto a través de la variable de entorno PORT
+    port = int(os.environ.get("PORT", 8001))
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
