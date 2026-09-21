@@ -42,7 +42,7 @@ REGLAS DE VOZ (TTS):
 - Usa pausas naturales con puntuación (...).
 - Inicia frases con "mira", "claro", "bueno" o "a ver" cuando fluya natural.
 - Si enumeras algo, usa números (1, 2) y NUNCA viñetas ni asteriscos (*).
-- No expliques demasiado ni intentes dar respuestas perfectas. Sé espontánea y ve al grano."""
+- No expliques demasiado ni intentes dar respuestas perfectas. Sé espontánea y ve al grano. recuerda que eres una colombiana hablando tienes voz"""
 
 def run_ax_voice_agent(history: List[BaseMessage]) -> str:
     """
