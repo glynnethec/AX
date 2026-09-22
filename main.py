@@ -61,7 +61,7 @@ def split_into_sentences(text: str) -> List[str]:
 async def tts_edge_sentence(sentence: str) -> bytes:
     """Genera audio para una sola oración con edge_tts."""
     import edge_tts
-    communicate = edge_tts.Communicate(sentence, "es-CO-SalomeNeural")
+    communicate = edge_tts.Communicate(sentence, "es-CO-SalomeNeural", rate="+20%", volume="+5%")
     audio_data = b""
     async for chunk in communicate.stream():
         if chunk["type"] == "audio":
@@ -186,7 +186,7 @@ async def process_voice_chat(request: ChatRequest):
                 print(f"Error con edge_tts paralelo: {e}")
                 # Último fallback: edge_tts sobre texto completo
                 import edge_tts
-                communicate = edge_tts.Communicate(ai_response, "es-CO-SalomeNeural")
+                communicate = edge_tts.Communicate(ai_response, "es-CO-SalomeNeural", rate="+20%", volume="+5%")
                 audio_data = b""
                 async for chunk in communicate.stream():
                     if chunk["type"] == "audio":
