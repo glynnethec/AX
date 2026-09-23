@@ -34,6 +34,9 @@ class ChatRequest(BaseModel):
     use_mock_tts: bool = False
     user_id: Optional[str] = "default_user"
 
+MessageModel.model_rebuild()
+ChatRequest.model_rebuild()
+
 USAGE_FILE = "tts_usage.json"
 MAX_CHARS = 2000
 RESET_SECONDS = 48 * 3600
