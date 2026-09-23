@@ -32,26 +32,53 @@ class MessageModel(BaseModel):
 class ChatRequest(BaseModel):
     messages: List[MessageModel]
     use_mock_tts: bool = False
+    user_id: Optional[str] = "default_user"
 
 USAGE_FILE = "tts_usage.json"
 MAX_CHARS = 2000
 RESET_SECONDS = 48 * 3600
 
-def get_tts_usage():
+def load_all_tts_usage() -> dict:
     if os.path.exists(USAGE_FILE):
         try:
             with open(USAGE_FILE, "r") as f:
-                return json.load(f)
+                data = json.load(f)
+                if isinstance(data, dict):
+                    return data
         except Exception:
             pass
-    return {"start_time": time.time(), "chars_used": 0}
+    return {}
 
-def save_tts_usage(data):
+def save_all_tts_usage(all_data: dict):
     try:
         with open(USAGE_FILE, "w") as f:
-            json.dump(data, f)
+            json.dump(all_data, f)
     except Exception as e:
         print(f"Error saving TTS usage: {e}")
+
+def get_user_tts_usage(user_id: str) -> dict:
+    all_data = load_all_tts_usage()
+    u_data = all_data.get(user_id, {})
+    current_time = time.time()
+    
+    start_time = u_data.get("start_time", current_time)
+    chars_used = u_data.get("chars_used", 0)
+    
+    if current_time - start_time > RESET_SECONDS:
+        start_time = current_time
+        chars_used = 0
+        all_data[user_id] = {"start_time": start_time, "chars_used": chars_used}
+        save_all_tts_usage(all_data)
+        
+    return {"start_time": start_time, "chars_used": chars_used}
+
+def update_user_tts_usage(user_id: str, new_chars_used: int, start_time: float):
+    all_data = load_all_tts_usage()
+    all_data[user_id] = {
+        "start_time": start_time,
+        "chars_used": new_chars_used
+    }
+    save_all_tts_usage(all_data)
 
 def split_into_sentences(text: str) -> List[str]:
     """Divide el texto en oraciones naturales para TTS."""
@@ -142,30 +169,25 @@ async def process_voice_chat(request: ChatRequest):
 
         ai_response = full_text.strip()
 
-        # ── 2. TTS CONCURRENTE POR ORACIÓN ──────────────────────────────────
+        # ── 2. TTS CONCURRENTE POR ORACIÓN (PER USER) ──────────────────────
         use_mock_tts = request.use_mock_tts
+        user_id = request.user_id or "default_user"
+        user_usage = get_user_tts_usage(user_id)
         audio_data = b""
 
         if not use_mock_tts:
-            # Verificar cuota de ElevenLabs
-            usage_data = get_tts_usage()
-            current_time = time.time()
-            if current_time - usage_data["start_time"] > RESET_SECONDS:
-                usage_data["start_time"] = current_time
-                usage_data["chars_used"] = 0
-
             response_len = len(ai_response)
             eleven_api_key = os.getenv("ELEVENLABS_API_KEY")
 
-            if eleven_api_key and usage_data["chars_used"] + response_len <= MAX_CHARS:
+            if eleven_api_key and user_usage["chars_used"] + response_len <= MAX_CHARS:
                 try:
                     # Generar audio de todas las oraciones EN PARALELO
                     tasks = [tts_elevenlabs_sentence(s, eleven_api_key) for s in sentences]
                     audio_chunks = await asyncio.gather(*tasks)
                     audio_data = b"".join(audio_chunks)
 
-                    usage_data["chars_used"] += response_len
-                    save_tts_usage(usage_data)
+                    user_usage["chars_used"] += response_len
+                    update_user_tts_usage(user_id, user_usage["chars_used"], user_usage["start_time"])
                 except Exception as e:
                     print(f"Error con ElevenLabs paralelo, usando edge_tts: {e}")
                     use_mock_tts = True
@@ -173,7 +195,7 @@ async def process_voice_chat(request: ChatRequest):
                 if not eleven_api_key:
                     print("Falta ELEVENLABS_API_KEY. Usando edge_tts.")
                 else:
-                    print(f"Límite de ElevenLabs superado. Usando edge_tts.")
+                    print(f"Límite de ElevenLabs superado para usuario {user_id}. Usando edge_tts.")
                 use_mock_tts = True
 
         # Fallback edge_tts: también concurrente por oraciones
@@ -196,34 +218,46 @@ async def process_voice_chat(request: ChatRequest):
         audio_base64 = base64.b64encode(audio_data).decode("utf-8")
         used_engine = "edge" if use_mock_tts else "elevenlabs"
         
+        user_usage = get_user_tts_usage(user_id)
+        current_time = time.time()
+        time_until_reset = max(0.0, RESET_SECONDS - (current_time - user_usage["start_time"]))
+        hours_until_reset = round(time_until_reset / 3600.0, 1)
+        available_chars = max(0, MAX_CHARS - user_usage["chars_used"])
+
         return {
             "status": "success", 
             "reply": ai_response,
             "audio_base64": audio_base64,
-            "used_engine": used_engine
+            "used_engine": used_engine,
+            "chars_used": user_usage["chars_used"],
+            "max_chars": MAX_CHARS,
+            "available_chars": available_chars,
+            "hours_until_reset": hours_until_reset
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error en el servidor: {str(e)}")
 
 @app.get("/api/tts_status")
-async def get_tts_status():
-    usage_data = get_tts_usage()
+async def get_tts_status(user_id: Optional[str] = "default_user"):
+    user_id = user_id or "default_user"
+    user_usage = get_user_tts_usage(user_id)
     current_time = time.time()
-    if current_time - usage_data["start_time"] > RESET_SECONDS:
-        usage_data["start_time"] = current_time
-        usage_data["chars_used"] = 0
-        save_tts_usage(usage_data)
         
     eleven_api_key = os.getenv("ELEVENLABS_API_KEY")
-    available_chars = max(0, MAX_CHARS - usage_data["chars_used"])
-    active_engine = "elevenlabs" if (eleven_api_key and usage_data["chars_used"] < MAX_CHARS) else "edge"
+    chars_used = user_usage.get("chars_used", 0)
+    available_chars = max(0, MAX_CHARS - chars_used)
+    active_engine = "elevenlabs" if (eleven_api_key and chars_used < MAX_CHARS) else "edge"
+    
+    time_until_reset = max(0.0, RESET_SECONDS - (current_time - user_usage.get("start_time", current_time)))
+    hours_until_reset = round(time_until_reset / 3600.0, 1)
     
     return {
         "status": "success",
         "used_engine": active_engine,
-        "chars_used": usage_data["chars_used"],
+        "chars_used": chars_used,
         "max_chars": MAX_CHARS,
-        "available_chars": available_chars
+        "available_chars": available_chars,
+        "hours_until_reset": hours_until_reset
     }
 
 if __name__ == "__main__":
