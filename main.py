@@ -194,14 +194,37 @@ async def process_voice_chat(request: ChatRequest):
 
         # ── 3. RESPUESTA ─────────────────────────────────────────────────────
         audio_base64 = base64.b64encode(audio_data).decode("utf-8")
+        used_engine = "edge" if use_mock_tts else "elevenlabs"
         
         return {
             "status": "success", 
             "reply": ai_response,
-            "audio_base64": audio_base64
+            "audio_base64": audio_base64,
+            "used_engine": used_engine
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error en el servidor: {str(e)}")
+
+@app.get("/api/tts_status")
+async def get_tts_status():
+    usage_data = get_tts_usage()
+    current_time = time.time()
+    if current_time - usage_data["start_time"] > RESET_SECONDS:
+        usage_data["start_time"] = current_time
+        usage_data["chars_used"] = 0
+        save_tts_usage(usage_data)
+        
+    eleven_api_key = os.getenv("ELEVENLABS_API_KEY")
+    available_chars = max(0, MAX_CHARS - usage_data["chars_used"])
+    active_engine = "elevenlabs" if (eleven_api_key and usage_data["chars_used"] < MAX_CHARS) else "edge"
+    
+    return {
+        "status": "success",
+        "used_engine": active_engine,
+        "chars_used": usage_data["chars_used"],
+        "max_chars": MAX_CHARS,
+        "available_chars": available_chars
+    }
 
 if __name__ == "__main__":
     import uvicorn
