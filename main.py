@@ -2,7 +2,7 @@ import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 import base64
 import os
 import json
@@ -168,6 +168,8 @@ async def process_voice_chat(request: ChatRequest):
             sentences.append(sentence_buffer.strip())
 
         ai_response = full_text.strip()
+        if not sentences:
+            sentences = [ai_response] if ai_response else ["Entendido."]
 
         # ── 2. TTS CONCURRENTE POR ORACIÓN (PER USER) ──────────────────────
         use_mock_tts = request.use_mock_tts
