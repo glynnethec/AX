@@ -7,20 +7,20 @@ import edge_tts
 load_dotenv()
 
 fillers = {
-    "filler_1.mp3": "Mmm...",
+    "filler_1.mp3": "A ver...",
     "filler_2.mp3": "Déjame pensar...",
     "filler_3.mp3": "Claro...",
-    "filler_4.mp3": "Okay...",
+    "filler_4.mp3": "Interesante...",
     "filler_5.mp3": "Entendido...",
-    "filler_6.mp3": "Dame un segundo...",
+    "filler_6.mp3": "Comprendo...",
     "filler_7.mp3": "Veamos...",
     "filler_8.mp3": "Perfecto...",
-    "filler_9.mp3": "Un momento...",
-    "filler_10.mp3": "Revisando...",
+    "filler_9.mp3": "Déjame analizarlo...",
+    "filler_10.mp3": "Buena pregunta...",
     "filler_11.mp3": "Vale...",
     "filler_12.mp3": "Déjame ver...",
-    "filler_13.mp3": "Ya te digo...",
-    "filler_14.mp3": "Procesando...",
+    "filler_13.mp3": "Fascinante...",
+    "filler_14.mp3": "Entiendo la idea...",
     "filler_15.mp3": "Bien..."
 }
 
@@ -64,4 +64,4 @@ async def generate_edge_fillers():
         print(f"Saved Edge TTS {filepath}")
 
 asyncio.run(generate_edge_fillers())
-print("All 15 fillers generated successfully!")
+print("All 15 fillers updated successfully!")
