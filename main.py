@@ -171,6 +171,20 @@ async def process_voice_chat(request: ChatRequest):
             sentences.append(sentence_buffer.strip())
 
         ai_response = full_text.strip()
+
+        # Extraer URL tag para el frontend y limpiar la respuesta
+        url_match = re.search(r'\[OPEN_URL:\s*(https?://[^\s\]]+)\]', ai_response)
+        url_to_open = url_match.group(1) if url_match else None
+        
+        if url_to_open:
+            ai_response = re.sub(r'\[OPEN_URL:\s*https?://[^\s\]]+\]', '', ai_response).strip()
+            cleaned_sentences = []
+            for s in sentences:
+                clean_s = re.sub(r'\[OPEN_URL:\s*https?://[^\s\]]+\]', '', s).strip()
+                if clean_s:
+                    cleaned_sentences.append(clean_s)
+            sentences = cleaned_sentences
+
         if not sentences:
             sentences = [ai_response] if ai_response else ["Entendido."]
 
@@ -237,7 +251,8 @@ async def process_voice_chat(request: ChatRequest):
             "chars_used": user_usage["chars_used"],
             "max_chars": MAX_CHARS,
             "available_chars": available_chars,
-            "hours_until_reset": hours_until_reset
+            "hours_until_reset": hours_until_reset,
+            "url_to_open": url_to_open
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error en el servidor: {str(e)}")
