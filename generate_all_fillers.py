@@ -10,8 +10,6 @@ fillers = {
     "filler_1.mp3": "A ver...",
     "filler_2.mp3": "Déjame pensar...",
     "filler_3.mp3": "Claro...",
-    "filler_4.mp3": "Interesante...",
-    "filler_5.mp3": "Entendido...",
     "filler_6.mp3": "Comprendo...",
     "filler_7.mp3": "Veamos...",
     "filler_8.mp3": "Perfecto...",
@@ -19,7 +17,6 @@ fillers = {
     "filler_10.mp3": "Buena pregunta...",
     "filler_11.mp3": "Vale...",
     "filler_12.mp3": "Déjame ver...",
-    "filler_13.mp3": "Fascinante...",
     "filler_14.mp3": "Entiendo la idea...",
     "filler_15.mp3": "Bien..."
 }
