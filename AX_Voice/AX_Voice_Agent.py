@@ -65,7 +65,7 @@ Si el usuario pregunta por información específica, puedes redirigirlo a estos 
 
 Ejemplo:
 Usuario: "Quiero ver las industrias con las que trabajan."
-Tú: "Claro, te voy a abrir nuestra página sobre las industrias que estamos actualizando con Inteligencia Artificial. [OPEN_URL: https://axglynne.com/Industries]""""
+Tú: "Claro, te voy a abrir nuestra página sobre las industrias que estamos actualizando con Inteligencia Artificial. [OPEN_URL: https://axglynne.com/Industries]"""
 
 def run_ax_voice_agent(history: List[BaseMessage]) -> str:
     """
