@@ -13,6 +13,7 @@ from elevenlabs.client import ElevenLabs
 
 from AX_Chat.AX_Agent import run_ax_agent
 from AX_Voice.AX_Voice_Agent import run_ax_voice_agent, llm, SYSTEM_PROMPT
+from AX_Voice.AX_Action_Agent import run_ax_action_agent_async
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 
 app = FastAPI(title="AX Glynne Core", version="1.0.0")
@@ -134,10 +135,12 @@ async def process_chat(request: ChatRequest):
 async def process_voice_chat(request: ChatRequest):
     try:
         langchain_msgs = []
+        user_message_text = ""
         for msg in request.messages:
             role = msg.role.lower()
             if role == "user":
                 langchain_msgs.append(HumanMessage(content=msg.content))
+                user_message_text = msg.content
             elif role in ["ai", "assistant"]:
                 langchain_msgs.append(AIMessage(content=msg.content))
                 
@@ -171,22 +174,11 @@ async def process_voice_chat(request: ChatRequest):
             sentences.append(sentence_buffer.strip())
 
         ai_response = full_text.strip()
-
-        # Extraer URL tag para el frontend y limpiar la respuesta
-        url_match = re.search(r'\[OPEN_URL:\s*(https?://[^\s\]]+)\]', ai_response, flags=re.IGNORECASE)
-        url_to_open = url_match.group(1) if url_match else None
-        
-        if url_to_open:
-            ai_response = re.sub(r'\[OPEN_URL:\s*https?://[^\s\]]+\]', '', ai_response, flags=re.IGNORECASE).strip()
-            cleaned_sentences = []
-            for s in sentences:
-                clean_s = re.sub(r'\[OPEN_URL:\s*https?://[^\s\]]+\]', '', s, flags=re.IGNORECASE).strip()
-                if clean_s:
-                    cleaned_sentences.append(clean_s)
-            sentences = cleaned_sentences
-
         if not sentences:
             sentences = [ai_response] if ai_response else ["Entendido."]
+
+        # Lanzar el Agente de Acción en paralelo para evaluar intenciones de UI
+        action_task = asyncio.create_task(run_ax_action_agent_async(user_message_text, ai_response))
 
         # ── 2. TTS CONCURRENTE POR ORACIÓN (PER USER) ──────────────────────
         use_mock_tts = request.use_mock_tts
@@ -232,6 +224,9 @@ async def process_voice_chat(request: ChatRequest):
                 async for chunk in communicate.stream():
                     if chunk["type"] == "audio":
                         audio_data += chunk["data"]
+
+        # Esperar resultado del Action Agent
+        url_to_open = await action_task
 
         # ── 3. RESPUESTA ─────────────────────────────────────────────────────
         audio_base64 = base64.b64encode(audio_data).decode("utf-8")

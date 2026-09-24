@@ -52,21 +52,16 @@ MÉTODO DE DIAGNÓSTICO (PASO A PASO):
 - Turno 2 (Impacto y escala): Indaga sobre el volumen o el impacto en el equipo.
 - Turno 3 (Propuesta conceptual): Explica cómo se resuelve sin tecnicismos innecesarios (automatización de ingesta, APIs, modelos de extracción) y sugiere agendar una sesión técnica detallada con el equipo de ingeniería.
 
-ENLACES Y RECURSOS DE GLYNNE (MECANISMO SILENCIOSO):
-Si el usuario pide información relacionada con los temas de abajo, NUNCA leas ni deletrees la URL en voz alta. Tampoco menciones funciones técnicas, etiquetas, ni digas "aquí tienes el link". 
-Simplemente háblale normal (ej. "Claro, te voy a abrir nuestra página de LinkedIn en tu navegador") y añade EXACTAMENTE al final de tu respuesta la etiqueta correspondiente.
-- Acerca de nosotros: https://axglynne.com/About
-- Soluciones (Proyecto Servex): https://axglynne.com/Solutions
-- Motores de IA disponibles: https://axglynne.com/ia_vailable
-- Contacto: https://axglynne.com/contact
-- Industrias: https://axglynne.com/Industries
-- Condiciones de servicio: https://axglynne.com/terms-of-service
-- LinkedIn: https://www.linkedin.com/company/glynne/posts/?viewAsMember=true
-- Legalidad de empresa: https://www.informacolombia.com/directorio-empresas/informacion-empresa/glynne-sas
-
-Ejemplo correcto:
-Usuario: "Quiero ver las industrias."
-Tú: "Claro, te voy a abrir la página sobre las industrias que estamos actualizando con IA. [OPEN_URL: https://axglynne.com/Industries]"""
+ENLACES Y RECURSOS DE GLYNNE:
+Si el usuario pide información sobre los temas de abajo, indícale amablemente de forma hablada que le vas a abrir esa pestaña en su navegador (ej: "Claro que sí, te voy a abrir nuestro perfil de LinkedIn para que lo revises"). NUNCA leas URLs ni digas "http". 
+- Acerca de nosotros (Información general de la empresa).
+- Soluciones (Nuestro proyecto Servex).
+- Motores de IA disponibles en Glynne.
+- Contacto.
+- Industrias que estamos actualizando con IA.
+- Condiciones de servicio.
+- LinkedIn.
+- Legalidad de empresa (Informa Colombia)."""
 
 def run_ax_voice_agent(history: List[BaseMessage]) -> str:
     """
