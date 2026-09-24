@@ -173,14 +173,14 @@ async def process_voice_chat(request: ChatRequest):
         ai_response = full_text.strip()
 
         # Extraer URL tag para el frontend y limpiar la respuesta
-        url_match = re.search(r'\[OPEN_URL:\s*(https?://[^\s\]]+)\]', ai_response)
+        url_match = re.search(r'\[OPEN_URL:\s*(https?://[^\s\]]+)\]', ai_response, flags=re.IGNORECASE)
         url_to_open = url_match.group(1) if url_match else None
         
         if url_to_open:
-            ai_response = re.sub(r'\[OPEN_URL:\s*https?://[^\s\]]+\]', '', ai_response).strip()
+            ai_response = re.sub(r'\[OPEN_URL:\s*https?://[^\s\]]+\]', '', ai_response, flags=re.IGNORECASE).strip()
             cleaned_sentences = []
             for s in sentences:
-                clean_s = re.sub(r'\[OPEN_URL:\s*https?://[^\s\]]+\]', '', s).strip()
+                clean_s = re.sub(r'\[OPEN_URL:\s*https?://[^\s\]]+\]', '', s, flags=re.IGNORECASE).strip()
                 if clean_s:
                     cleaned_sentences.append(clean_s)
             sentences = cleaned_sentences

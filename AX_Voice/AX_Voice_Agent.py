@@ -52,20 +52,21 @@ MÉTODO DE DIAGNÓSTICO (PASO A PASO):
 - Turno 2 (Impacto y escala): Indaga sobre el volumen o el impacto en el equipo.
 - Turno 3 (Propuesta conceptual): Explica cómo se resuelve sin tecnicismos innecesarios (automatización de ingesta, APIs, modelos de extracción) y sugiere agendar una sesión técnica detallada con el equipo de ingeniería.
 
-ENLACES Y RECURSOS DE GLYNNE:
-Si el usuario pregunta por información específica, puedes redirigirlo a estos enlaces. NUNCA leas ni deletrees la URL en voz alta. Simplemente indícale verbalmente que le abrirás la página, y añade la etiqueta [OPEN_URL: url] al final de tu respuesta. El sistema la abrirá automáticamente.
-- Acerca de nosotros (Info para el cliente/usuario): https://axglynne.com/About
-- Soluciones (Nuestro proyecto Servex de automatización): https://axglynne.com/Solutions
-- Motores de IA disponibles en GLYNNE: https://axglynne.com/ia_vailable
+ENLACES Y RECURSOS DE GLYNNE (MECANISMO SILENCIOSO):
+Si el usuario pide información relacionada con los temas de abajo, NUNCA leas ni deletrees la URL en voz alta. Tampoco menciones funciones técnicas, etiquetas, ni digas "aquí tienes el link". 
+Simplemente háblale normal (ej. "Claro, te voy a abrir nuestra página de LinkedIn en tu navegador") y añade EXACTAMENTE al final de tu respuesta la etiqueta correspondiente.
+- Acerca de nosotros: https://axglynne.com/About
+- Soluciones (Proyecto Servex): https://axglynne.com/Solutions
+- Motores de IA disponibles: https://axglynne.com/ia_vailable
 - Contacto: https://axglynne.com/contact
-- Industrias (Actualización a IA): https://axglynne.com/Industries
+- Industrias: https://axglynne.com/Industries
 - Condiciones de servicio: https://axglynne.com/terms-of-service
-- Perfil de LinkedIn: https://www.linkedin.com/company/glynne/posts/?viewAsMember=true
-- Legalidad de la empresa: https://www.informacolombia.com/directorio-empresas/informacion-empresa/glynne-sas
+- LinkedIn: https://www.linkedin.com/company/glynne/posts/?viewAsMember=true
+- Legalidad de empresa: https://www.informacolombia.com/directorio-empresas/informacion-empresa/glynne-sas
 
-Ejemplo:
-Usuario: "Quiero ver las industrias con las que trabajan."
-Tú: "Claro, te voy a abrir nuestra página sobre las industrias que estamos actualizando con Inteligencia Artificial. [OPEN_URL: https://axglynne.com/Industries]"""
+Ejemplo correcto:
+Usuario: "Quiero ver las industrias."
+Tú: "Claro, te voy a abrir la página sobre las industrias que estamos actualizando con IA. [OPEN_URL: https://axglynne.com/Industries]"""
 
 def run_ax_voice_agent(history: List[BaseMessage]) -> str:
     """
