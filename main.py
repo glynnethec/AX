@@ -12,7 +12,7 @@ import re
 from elevenlabs.client import ElevenLabs
 
 from AX_Chat.AX_Agent import run_ax_agent
-from AX_Voice.AX_Voice_Agent import run_ax_voice_agent, llm, SYSTEM_PROMPT
+from AX_Voice.AX_Voice_Agent import run_ax_voice_agent, llm, SYSTEM_PROMPT, SYSTEM_PROMPT_EN
 from AX_Voice.AX_Action_Agent import run_ax_action_agent_async
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 
@@ -34,6 +34,7 @@ class ChatRequest(BaseModel):
     messages: List[MessageModel]
     use_mock_tts: bool = False
     user_id: Optional[str] = "default_user"
+    language: Optional[str] = "es"
 
 MessageModel.model_rebuild()
 ChatRequest.model_rebuild()
@@ -89,23 +90,25 @@ def split_into_sentences(text: str) -> List[str]:
     parts = re.split(r'(?<=[.!?…])\s+|(?<=\.\.\.)\s*', text)
     return [p.strip() for p in parts if p.strip()]
 
-async def tts_edge_sentence(sentence: str) -> bytes:
+async def tts_edge_sentence(sentence: str, language: str = "es") -> bytes:
     """Genera audio para una sola oración con edge_tts."""
     import edge_tts
-    communicate = edge_tts.Communicate(sentence, "es-CO-SalomeNeural", rate="+20%", volume="+5%")
+    voice_name = "en-US-ChristopherNeural" if language == "en" else "es-CO-SalomeNeural"
+    communicate = edge_tts.Communicate(sentence, voice_name, rate="+20%", volume="+5%")
     audio_data = b""
     async for chunk in communicate.stream():
         if chunk["type"] == "audio":
             audio_data += chunk["data"]
     return audio_data
 
-async def tts_elevenlabs_sentence(sentence: str, api_key: str) -> bytes:
+async def tts_elevenlabs_sentence(sentence: str, api_key: str, language: str = "es") -> bytes:
     """Genera audio para una sola oración con ElevenLabs (en executor para no bloquear)."""
     def _sync():
         client = ElevenLabs(api_key=api_key)
+        voice_id = "ut2XM2wJyIZLTtW6lFzZ" if language == "en" else "VmejBeYhbrcTPwDniox7"
         gen = client.text_to_speech.convert(
             text=sentence,
-            voice_id="VmejBeYhbrcTPwDniox7",
+            voice_id=voice_id,
             model_id="eleven_turbo_v2_5",  # modelo más rápido de ElevenLabs
         )
         return b"".join(gen)
@@ -151,7 +154,8 @@ async def process_voice_chat(request: ChatRequest):
         # Limitar historial
         MAX_HISTORY = 6
         recent_history = langchain_msgs[-MAX_HISTORY:] if len(langchain_msgs) > MAX_HISTORY else langchain_msgs
-        messages = [SystemMessage(content=SYSTEM_PROMPT)] + recent_history
+        prompt_to_use = SYSTEM_PROMPT_EN if request.language == "en" else SYSTEM_PROMPT
+        messages = [SystemMessage(content=prompt_to_use)] + recent_history
 
         # Acumular texto en oraciones completas mientras hace stream
         full_text = ""
@@ -193,7 +197,7 @@ async def process_voice_chat(request: ChatRequest):
             if eleven_api_key and user_usage["chars_used"] + response_len <= MAX_CHARS:
                 try:
                     # Generar audio de todas las oraciones EN PARALELO
-                    tasks = [tts_elevenlabs_sentence(s, eleven_api_key) for s in sentences]
+                    tasks = [tts_elevenlabs_sentence(s, eleven_api_key, request.language) for s in sentences]
                     audio_chunks = await asyncio.gather(*tasks)
                     audio_data = b"".join(audio_chunks)
 
@@ -212,14 +216,15 @@ async def process_voice_chat(request: ChatRequest):
         # Fallback edge_tts: también concurrente por oraciones
         if use_mock_tts:
             try:
-                tasks = [tts_edge_sentence(s) for s in sentences]
+                tasks = [tts_edge_sentence(s, request.language) for s in sentences]
                 audio_chunks = await asyncio.gather(*tasks)
                 audio_data = b"".join(audio_chunks)
             except Exception as e:
                 print(f"Error con edge_tts paralelo: {e}")
                 # Último fallback: edge_tts sobre texto completo
                 import edge_tts
-                communicate = edge_tts.Communicate(ai_response, "es-CO-SalomeNeural", rate="+20%", volume="+5%")
+                voice_name = "en-US-ChristopherNeural" if request.language == "en" else "es-CO-SalomeNeural"
+                communicate = edge_tts.Communicate(ai_response, voice_name, rate="+20%", volume="+5%")
                 audio_data = b""
                 async for chunk in communicate.stream():
                     if chunk["type"] == "audio":
