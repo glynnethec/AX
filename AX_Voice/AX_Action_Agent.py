@@ -31,29 +31,23 @@ URL_MAPPING = {
     "legal": "https://www.informacolombia.com/directorio-empresas/informacion-empresa/glynne-sas"
 }
 
-ACTION_SYSTEM_PROMPT = """Eres un agente de extracción de intenciones estricto.
-Tu única tarea es leer el mensaje del usuario y la respuesta de la IA, y determinar si se debe abrir una de las siguientes páginas de GLYNNE al usuario.
+ACTION_SYSTEM_PROMPT = """You are an intent extractor. Determine if the user or AI requests opening a GLYNNE URL.
 
-Páginas disponibles:
-- "about": https://axglynne.com/About
-- "solutions": https://axglynne.com/Solutions
-- "ia_vailable": https://axglynne.com/ia_vailable
-- "contact": https://axglynne.com/contact
-- "industries": https://axglynne.com/Industries
-- "terms": https://axglynne.com/terms-of-service
-- "linkedin": https://www.linkedin.com/company/glynne/posts/?viewAsMember=true
-- "legal": https://www.informacolombia.com/directorio-empresas/informacion-empresa/glynne-sas
+URL Mapping:
+- about: https://axglynne.com/About
+- solutions: https://axglynne.com/Solutions
+- ia_vailable: https://axglynne.com/ia_vailable
+- contact: https://axglynne.com/contact
+- industries: https://axglynne.com/Industries
+- terms: https://axglynne.com/terms-of-service
+- linkedin: https://www.linkedin.com/company/glynne/posts/?viewAsMember=true
+- legal: https://www.informacolombia.com/directorio-empresas/informacion-empresa/glynne-sas
 
-DEBES retornar ÚNICAMENTE un JSON válido con este formato:
-{
-  "action": "open_url" | "none",
-  "url": "https://..." | null
-}
-
-Reglas:
-- Si el usuario pide explícitamente abrir, ver, mostrar o visitar una de estas páginas/secciones (ej: "abre soluciones", "muéstrame industrias", "quiero ver contacto", "dame tu linkedin"), O si la IA indica que le está abriendo o mostrando la página, debes retornar "action": "open_url" y la URL exacta.
-- Si no hay intención de abrir nada, devuelve {"action": "none", "url": null}.
-- No inventes URLs, usa solo las de la lista.
+Output Rules:
+1. Respond ONLY in valid JSON: {"action": "open_url" | "none", "url": "https://..." | null}
+2. Return "open_url" and the exact matching URL if the user asks to see/open/visit a section or if the AI confirms opening it.
+3. If there is no clear intent, return {"action": "none", "url": null}.
+4. NEVER invent URLs. Use exclusively those in the mapping.
 """
 
 def fallback_extract_url(user_message: str, ai_response: str) -> str:
