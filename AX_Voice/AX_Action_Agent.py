@@ -20,8 +20,19 @@ llm_action = ChatGroq(
     model_kwargs={"response_format": {"type": "json_object"}}
 )
 
+URL_MAPPING = {
+    "about": "https://axglynne.com/About",
+    "solutions": "https://axglynne.com/Solutions",
+    "ia_vailable": "https://axglynne.com/ia_vailable",
+    "contact": "https://axglynne.com/contact",
+    "industries": "https://axglynne.com/Industries",
+    "terms": "https://axglynne.com/terms-of-service",
+    "linkedin": "https://www.linkedin.com/company/glynne/posts/?viewAsMember=true",
+    "legal": "https://www.informacolombia.com/directorio-empresas/informacion-empresa/glynne-sas"
+}
+
 ACTION_SYSTEM_PROMPT = """Eres un agente de extracción de intenciones estricto.
-Tu única tarea es leer el último mensaje del usuario y la respuesta de la IA, y determinar si la IA ha decidido abrirle una de las siguientes páginas de GLYNNE al usuario.
+Tu única tarea es leer el mensaje del usuario y la respuesta de la IA, y determinar si se debe abrir una de las siguientes páginas de GLYNNE al usuario.
 
 Páginas disponibles:
 - "about": https://axglynne.com/About
@@ -40,27 +51,58 @@ DEBES retornar ÚNICAMENTE un JSON válido con este formato:
 }
 
 Reglas:
-- Si la IA dice algo como "te voy a abrir la página", "te muestro las industrias", o el usuario pide ver el linkedin y la IA acepta, debes extraer la URL correcta de la lista.
+- Si el usuario pide explícitamente abrir, ver, mostrar o visitar una de estas páginas/secciones (ej: "abre soluciones", "muéstrame industrias", "quiero ver contacto", "dame tu linkedin"), O si la IA indica que le está abriendo o mostrando la página, debes retornar "action": "open_url" y la URL exacta.
 - Si no hay intención de abrir nada, devuelve {"action": "none", "url": null}.
 - No inventes URLs, usa solo las de la lista.
 """
 
+def fallback_extract_url(user_message: str, ai_response: str) -> str:
+    """Extracción por palabras clave cuando el LLM no está disponible o falla."""
+    text = f"{user_message} {ai_response}".lower()
+    
+    # Intención explícita de navegación/apertura o mención de sección
+    nav_verbs = ["abrir", "abre", "abreme", "ábreme", "ver", "muestra", "muestrame", "muéstrame", "ir", "lleva", "llevame", "llévame", "mostrar", "open", "show"]
+    has_nav_intent = any(v in text for v in nav_verbs)
+    
+    if "linkedin" in text:
+        return URL_MAPPING["linkedin"]
+    if "solucion" in text or "soluciones" in text or "solutions" in text:
+        return URL_MAPPING["solutions"]
+    if "industria" in text or "industrias" in text or "industries" in text:
+        return URL_MAPPING["industries"]
+    if "contacto" in text or "contactar" in text or "contact" in text:
+        return URL_MAPPING["contact"]
+    if "sobre nosotros" in text or "about" in text or "quienes somos" in text or "quiénes somos" in text:
+        return URL_MAPPING["about"]
+    if "ia_vailable" in text or "ia vailable" in text:
+        return URL_MAPPING["ia_vailable"]
+    if "terminos" in text or "términos" in text or "condiciones" in text or "terms" in text:
+        return URL_MAPPING["terms"]
+    if "legal" in text or "directorio" in text or "informacolombia" in text:
+        return URL_MAPPING["legal"]
+        
+    return None
+
 async def run_ax_action_agent_async(user_message: str, ai_response: str) -> str:
     """Evalúa asíncronamente si se debe abrir una URL."""
-    if not GROQ_API_KEY:
-        return None
-        
-    messages = [
-        SystemMessage(content=ACTION_SYSTEM_PROMPT),
-        HumanMessage(content=f"Mensaje del Usuario: {user_message}\n\nRespuesta de la IA: {ai_response}")
-    ]
+    url_found = None
     
-    try:
-        response = await llm_action.ainvoke(messages)
-        data = json.loads(response.content)
-        if data.get("action") == "open_url" and data.get("url"):
-            return data.get("url")
-        return None
-    except Exception as e:
-        print(f"Action Agent Error: {e}")
-        return None
+    if GROQ_API_KEY:
+        messages = [
+            SystemMessage(content=ACTION_SYSTEM_PROMPT),
+            HumanMessage(content=f"Mensaje del Usuario: {user_message}\n\nRespuesta de la IA: {ai_response}")
+        ]
+        try:
+            response = await llm_action.ainvoke(messages)
+            data = json.loads(response.content)
+            if data.get("action") == "open_url" and data.get("url"):
+                url_found = data.get("url")
+        except Exception as e:
+            print(f"Action Agent LLM Error: {e}")
+
+    # Fallback determinista si el LLM falló o no retornó URL
+    if not url_found:
+        url_found = fallback_extract_url(user_message, ai_response)
+        
+    return url_found
+
