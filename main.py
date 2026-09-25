@@ -181,24 +181,8 @@ async def process_voice_chat(request: ChatRequest):
         if not sentences:
             sentences = [ai_response] if ai_response else ["Entendido."]
 
-        # Pre-filtro de palabras clave para activar el Agente de Acción solo cuando sea necesario
-        action_keywords = [
-            "link", "enlace", "página", "pagina", "sitio", "web", "url", 
-            "abrir", "abre", "muéstrame", "muestrame", "mostrar", "ver", 
-            "contacto", "agendar", "cita", "soluciones", "about", "nosotros", 
-            "industrias", "términos", "terminos", "linkedin", "legal", "demo",
-            "page", "site", "open", "show", "schedule", "contact"
-        ]
-        user_lower = user_message_text.lower()
-        ai_lower = ai_response.lower()
-        
-        has_action_intent = any(kw in user_lower or kw in ai_lower for kw in action_keywords)
-
-        # Lanzar el Agente de Acción en paralelo solo si se detectó intención o palabra clave
-        if has_action_intent:
-            action_task = asyncio.create_task(run_ax_action_agent_async(user_message_text, ai_response))
-        else:
-            action_task = None
+        # Lanzar el Agente de Acción en paralelo para evaluar intenciones de UI
+        action_task = asyncio.create_task(run_ax_action_agent_async(user_message_text, ai_response))
 
         # ── 2. TTS CONCURRENTE POR ORACIÓN (PER USER) ──────────────────────
         use_mock_tts = request.use_mock_tts
@@ -246,11 +230,8 @@ async def process_voice_chat(request: ChatRequest):
                     if chunk["type"] == "audio":
                         audio_data += chunk["data"]
 
-        # Esperar resultado del Action Agent solo si fue ejecutado por el pre-filtro
-        if action_task:
-            url_to_open = await action_task
-        else:
-            url_to_open = None
+        # Esperar resultado del Action Agent
+        url_to_open = await action_task
 
         # ── 3. RESPUESTA ─────────────────────────────────────────────────────
         audio_base64 = base64.b64encode(audio_data).decode("utf-8")
