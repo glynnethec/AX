@@ -177,6 +177,10 @@ async def process_voice_chat(request: ChatRequest):
         if sentence_buffer.strip() and len(sentence_buffer.strip()) > 3:
             sentences.append(sentence_buffer.strip())
 
+        ai_response = full_text.strip()
+        if not sentences:
+            sentences = [ai_response] if ai_response else ["Entendido."]
+
         # Pre-filtro de palabras clave para activar el Agente de Acción solo cuando sea necesario
         action_keywords = [
             "link", "enlace", "página", "pagina", "sitio", "web", "url", 
