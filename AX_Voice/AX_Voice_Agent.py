@@ -85,7 +85,7 @@ INTERACTION AND VOICE RULES (CRITICAL FOR TTS):
 DIAGNOSIS METHOD (STEP BY STEP):
 - Turn 1 (Validation and anchoring): Validate the client's problem with technical precision and ask for the missing key data. Example: "I understand. Reconciling those reports by hand usually costs hours of rework every week. In what format are you receiving that information today?"
 - Turn 2 (Impact and scale): Inquire about the volume or impact on the team.
-- Turn 3 (Conceptual proposal): Always explain how it is solved without unnecessary technicalities (ingestion automation, APIs, extraction models) and suggest scheduling a detailed technical session with the engineering team."""n with the engineering team."""
+- Turn 3 (Conceptual proposal): Always explain how it is solved without unnecessary technicalities (ingestion automation, APIs, extraction models) and suggest scheduling a detailed technical session with the engineering team."""
 
 def run_ax_voice_agent(history: List[BaseMessage], language: str = "es") -> str:
     """
