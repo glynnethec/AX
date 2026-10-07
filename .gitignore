@@ -27,3 +27,12 @@ __pycache__/
 # Logs and databases
 *.log
 *.sqlite3
+
+# Large Model Files & Downloads
+downloads/
+*.gguf
+*.bin
+*.pt
+*.pth
+*.safetensors
+

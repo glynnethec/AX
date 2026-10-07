@@ -1,5 +1,6 @@
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Form
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
@@ -9,12 +10,17 @@ import json
 import time
 import asyncio
 import re
+import subprocess
 from elevenlabs.client import ElevenLabs
+
 
 from AX_Chat.AX_Agent import run_ax_agent
 from AX_Voice.AX_Voice_Agent import run_ax_voice_agent, llm, SYSTEM_PROMPT, SYSTEM_PROMPT_EN
 from AX_Voice.AX_Action_Agent import run_ax_action_agent_async
+from AX_Trainer.AX_QLoRA_Trainer import run_ax_trainer
+from AX_Trainer.AX_Dataset_Generator import generate_dataset_with_groq, extract_text_from_file_bytes
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+
 
 app = FastAPI(title="AX Glynne Core", version="1.0.0")
 
@@ -279,6 +285,253 @@ async def get_tts_status(user_id: Optional[str] = "default_user"):
         "available_chars": available_chars,
         "hours_until_reset": hours_until_reset
     }
+
+# ── ENDPOINTS DE GENERACIÓN Y ENTRENAMIENTO QLORA ──────────────────────────────
+
+class GenerateDatasetRequest(BaseModel):
+    personality_info: Optional[str] = ""
+    business_info: Optional[str] = ""
+    num_examples: Optional[int] = 25
+
+@app.post("/api/train/generate_dataset")
+async def generate_dataset_endpoint(
+    personality_text: Optional[str] = Form(""),
+    business_text: Optional[str] = Form(""),
+    num_examples: Optional[int] = Form(25),
+    personality_file: Optional[UploadFile] = File(None),
+    business_file: Optional[UploadFile] = File(None),
+):
+    try:
+        final_personality = personality_text or ""
+        final_business = business_text or ""
+
+        if personality_file:
+            bytes_content = await personality_file.read()
+            extracted = extract_text_from_file_bytes(personality_file.filename, bytes_content)
+            if extracted:
+                final_personality += f"\n\n[Archivo Personalidad: {personality_file.filename}]\n" + extracted
+
+        if business_file:
+            bytes_content = await business_file.read()
+            extracted = extract_text_from_file_bytes(business_file.filename, bytes_content)
+            if extracted:
+                final_business += f"\n\n[Archivo Negocio: {business_file.filename}]\n" + extracted
+
+        if not final_personality.strip() and not final_business.strip():
+            raise HTTPException(status_code=400, detail="Debes proporcionar al menos información del negocio o de personalidad.")
+
+        dataset = generate_dataset_with_groq(
+            personality_info=final_personality,
+            business_info=final_business,
+            num_examples=num_examples or 25
+        )
+
+        return {
+            "status": "success",
+            "count": len(dataset),
+            "dataset": dataset
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generando dataset sintético: {str(e)}")
+
+
+@app.post("/api/train/generate_dataset_json")
+async def generate_dataset_json_endpoint(req: GenerateDatasetRequest):
+    try:
+        if not req.personality_info.strip() and not req.business_info.strip():
+            raise HTTPException(status_code=400, detail="Debes proporcionar información de personalidad o del negocio.")
+
+        dataset = generate_dataset_with_groq(
+            personality_info=req.personality_info,
+            business_info=req.business_info,
+            num_examples=req.num_examples or 25
+        )
+
+        return {
+            "status": "success",
+            "count": len(dataset),
+            "dataset": dataset
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generando dataset sintético: {str(e)}")
+
+
+training_job_state = {
+    "status": "idle",  # idle, running, completed, error
+    "model_name": "",
+    "progress": 0,
+    "logs": [],
+    "error_message": None,
+    "download_command": None
+}
+
+class DatasetItem(BaseModel):
+    instruction: str
+    input: Optional[str] = ""
+    output: str
+
+class TrainRequest(BaseModel):
+    model_name: str = "unsloth/Qwen2.5-0.5B-Instruct"
+    dataset: List[DatasetItem]
+
+def execute_training_task(model_name: str, dataset_raw: List[dict]):
+    global training_job_state
+    training_job_state["status"] = "running"
+    training_job_state["model_name"] = model_name
+    training_job_state["progress"] = 10
+    training_job_state["logs"] = [f"[GLYNNE CORE] Conectando con la nube de Modal para {model_name}..."]
+    training_job_state["error_message"] = None
+    
+    try:
+        dataset_str = json.dumps(dataset_raw)
+        cmd = [
+            "./venv/bin/modal", "run", "AX_Trainer/AX_QLoRA_Trainer.py",
+            "--model-name", model_name,
+            "--dataset-json", dataset_str
+        ]
+        training_job_state["logs"].append(f"[MODAL] Solicitando GPU remota en la nube...")
+        training_job_state["progress"] = 20
+
+
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            cwd=os.path.dirname(os.path.abspath(__file__))
+        )
+
+        for line in iter(process.stdout.readline, ''):
+            if line:
+                cleaned = line.strip()
+                training_job_state["logs"].append(cleaned)
+                if "[1/4]" in cleaned or "Cargando modelo" in cleaned:
+                    training_job_state["progress"] = 35
+                elif "[2/4]" in cleaned or "LoRA" in cleaned:
+                    training_job_state["progress"] = 55
+                elif "[3/4]" in cleaned or "datos" in cleaned:
+                    training_job_state["progress"] = 70
+                elif "[4/4]" in cleaned or "SFTTrainer" in cleaned:
+                    training_job_state["progress"] = 85
+                elif "Guardando modelo" in cleaned or "GGUF" in cleaned:
+                    training_job_state["progress"] = 95
+
+        process.stdout.close()
+        return_code = process.wait()
+
+        if return_code == 0:
+            training_job_state["progress"] = 100
+            training_job_state["status"] = "completed"
+            training_job_state["download_command"] = "modal volume get ax-qlora-models ax_model/unsloth.Q4_K_M.gguf ./"
+            training_job_state["logs"].append("[SISTEMA] ✅ Proceso de entrenamiento finalizado con éxito. Modelo .GGUF listo para descarga.")
+        else:
+            training_job_state["status"] = "error"
+            training_job_state["error_message"] = "El comando de Modal finalizó con error."
+            training_job_state["logs"].append("[ERROR] El proceso de Modal devolvió un código de error.")
+    except Exception as e:
+        training_job_state["status"] = "error"
+        training_job_state["error_message"] = str(e)
+        training_job_state["logs"].append(f"[EXCEPTION] {str(e)}")
+
+
+@app.post("/api/train")
+async def start_training(req: TrainRequest, background_tasks: BackgroundTasks):
+    global training_job_state
+    if training_job_state["status"] == "running":
+        return {"status": "error", "message": "Ya hay un entrenamiento en curso."}
+    
+    dataset_list = [item.model_dump() for item in req.dataset]
+    background_tasks.add_task(execute_training_task, req.model_name, dataset_list)
+    return {"status": "started", "message": f"Entrenamiento de {req.model_name} iniciado en la nube de Modal."}
+
+@app.get("/api/train/status")
+async def get_train_status():
+    return training_job_state
+
+
+@app.post("/api/train/reset")
+@app.get("/api/train/reset")
+async def reset_train_status():
+    global training_job_state
+    training_job_state = {
+        "status": "idle",
+        "model_name": "",
+        "progress": 0,
+        "logs": [],
+        "error_message": None,
+        "download_command": None
+    }
+    return {"status": "reset", "message": "Estado de entrenamiento reseteado correctamente."}
+
+
+@app.get("/api/train/download")
+async def download_trained_model():
+    """
+    Descarga o sirve el archivo .gguf del modelo entrenado.
+    Si el archivo no existe localmente en ./downloads, intenta bajarlo desde el volumen de Modal.
+    """
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    downloads_dir = os.path.join(base_dir, "downloads")
+    os.makedirs(downloads_dir, exist_ok=True)
+    
+    gguf_files = []
+    for root, dirs, files in os.walk(downloads_dir):
+        for f in files:
+            if f.endswith(".gguf"):
+                gguf_files.append(os.path.join(root, f))
+    
+    if not gguf_files:
+        try:
+            cmd = ["./venv/bin/modal", "volume", "get", "ax-qlora-models", "ax_model_gguf", "downloads/"]
+            subprocess.run(cmd, cwd=base_dir, capture_output=True, text=True)
+            for root, dirs, files in os.walk(downloads_dir):
+                for f in files:
+                    if f.endswith(".gguf"):
+                        gguf_files.append(os.path.join(root, f))
+        except Exception as e:
+            print(f"Error descargando desde Modal volume ax_model_gguf: {e}")
+
+    if not gguf_files:
+        try:
+            cmd = ["./venv/bin/modal", "volume", "get", "ax-qlora-models", "ax_model", "downloads/"]
+            subprocess.run(cmd, cwd=base_dir, capture_output=True, text=True)
+            for root, dirs, files in os.walk(downloads_dir):
+                for f in files:
+                    if f.endswith(".gguf"):
+                        gguf_files.append(os.path.join(root, f))
+        except Exception:
+            pass
+
+    if not gguf_files:
+        raise HTTPException(status_code=404, detail="No se encontró ningún modelo .gguf entrenado disponible para descargar.")
+    
+    target_file = gguf_files[0]
+    filename = os.path.basename(target_file)
+    return FileResponse(path=target_file, filename=filename, media_type="application/octet-stream")
+
+
+class TestChatRequest(BaseModel):
+    prompt: str
+    instruction: Optional[str] = "Responder la duda del cliente."
+
+@app.post("/api/train/test_chat")
+async def test_chat_trained_model(req: TestChatRequest):
+    """
+    Realiza inferencia en tiempo real sobre el modelo entrenado en Modal.
+    """
+    try:
+        import modal
+        f = modal.Function.from_name("ax-glynne-trainer", "inferir_modelo_remote")
+        response_text = await f.remote.aio(req.prompt, req.instruction or "Responder la duda del cliente de forma amable y concisa.")
+        return {"status": "success", "response": response_text}
+    except Exception as e:
+        print(f"Error en inferencia de prueba con Modal: {e}")
+        return {"status": "error", "message": str(e), "response": f"Respuesta de prueba: {req.prompt}"}
+
+
+
+
 
 if __name__ == "__main__":
     import uvicorn
