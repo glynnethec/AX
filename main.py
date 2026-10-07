@@ -11,6 +11,8 @@ import time
 import asyncio
 import re
 import subprocess
+import sys
+import shutil
 from elevenlabs.client import ElevenLabs
 
 
@@ -374,6 +376,21 @@ class TrainRequest(BaseModel):
     model_name: str = "unsloth/Qwen2.5-0.5B-Instruct"
     dataset: List[DatasetItem]
 
+def get_modal_cmd():
+    modal_bin = shutil.which("modal")
+    if modal_bin:
+        return modal_bin
+    venv_dir = os.path.dirname(sys.executable)
+    potential_modal = os.path.join(venv_dir, "modal")
+    if os.path.exists(potential_modal):
+        return potential_modal
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    relative_modal = os.path.join(base_dir, "venv", "bin", "modal")
+    if os.path.exists(relative_modal):
+        return relative_modal
+    return "modal"
+
+
 def execute_training_task(model_name: str, dataset_raw: List[dict]):
     global training_job_state
     training_job_state["status"] = "running"
@@ -384,8 +401,9 @@ def execute_training_task(model_name: str, dataset_raw: List[dict]):
     
     try:
         dataset_str = json.dumps(dataset_raw)
+        modal_path = get_modal_cmd()
         cmd = [
-            "./venv/bin/modal", "run", "AX_Trainer/AX_QLoRA_Trainer.py",
+            modal_path, "run", "AX_Trainer/AX_QLoRA_Trainer.py",
             "--model-name", model_name,
             "--dataset-json", dataset_str
         ]
@@ -481,9 +499,10 @@ async def download_trained_model():
             if f.endswith(".gguf"):
                 gguf_files.append(os.path.join(root, f))
     
+    modal_path = get_modal_cmd()
     if not gguf_files:
         try:
-            cmd = ["./venv/bin/modal", "volume", "get", "ax-qlora-models", "ax_model_gguf", "downloads/"]
+            cmd = [modal_path, "volume", "get", "ax-qlora-models", "ax_model_gguf", "downloads/"]
             subprocess.run(cmd, cwd=base_dir, capture_output=True, text=True)
             for root, dirs, files in os.walk(downloads_dir):
                 for f in files:
@@ -494,7 +513,7 @@ async def download_trained_model():
 
     if not gguf_files:
         try:
-            cmd = ["./venv/bin/modal", "volume", "get", "ax-qlora-models", "ax_model", "downloads/"]
+            cmd = [modal_path, "volume", "get", "ax-qlora-models", "ax_model", "downloads/"]
             subprocess.run(cmd, cwd=base_dir, capture_output=True, text=True)
             for root, dirs, files in os.walk(downloads_dir):
                 for f in files:
