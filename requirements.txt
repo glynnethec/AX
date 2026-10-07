@@ -2,10 +2,13 @@
 fastapi
 uvicorn
 pydantic
+python-multipart
 
 # Integraciones de IA
 langchain-core
 langchain-groq
+groq
+pypdf
 
 # Utilidades
 python-dotenv
@@ -13,4 +16,5 @@ requests
 edge-tts
 elevenlabs
 modal
+
 
