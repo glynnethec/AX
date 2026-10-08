@@ -1,6 +1,6 @@
 import uvicorn
 from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Form
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
@@ -21,6 +21,7 @@ from AX_Voice.AX_Voice_Agent import run_ax_voice_agent, llm, SYSTEM_PROMPT, SYST
 from AX_Voice.AX_Action_Agent import run_ax_action_agent_async
 from AX_Trainer.AX_QLoRA_Trainer import run_ax_trainer
 from AX_Trainer.AX_Dataset_Generator import generate_dataset_with_groq, extract_text_from_file_bytes
+from AX_LibraryModel.AX_HuggingFace_Bridge import get_curated_open_weights_catalog, search_huggingface_models, get_huggingface_model_files, HF_RESOLVE_BASE
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 
 
@@ -358,6 +359,8 @@ async def generate_dataset_json_endpoint(req: GenerateDatasetRequest):
         raise HTTPException(status_code=500, detail=f"Error generando dataset sintético: {str(e)}")
 
 
+current_training_process = None
+
 training_job_state = {
     "status": "idle",  # idle, running, completed, error
     "model_name": "",
@@ -392,7 +395,7 @@ def get_modal_cmd():
 
 
 def execute_training_task(model_name: str, dataset_raw: List[dict]):
-    global training_job_state
+    global training_job_state, current_training_process
     training_job_state["status"] = "running"
     training_job_state["model_name"] = model_name
     training_job_state["progress"] = 10
@@ -410,7 +413,6 @@ def execute_training_task(model_name: str, dataset_raw: List[dict]):
         training_job_state["logs"].append(f"[MODAL] Solicitando GPU remota en la nube...")
         training_job_state["progress"] = 20
 
-
         process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
@@ -419,6 +421,7 @@ def execute_training_task(model_name: str, dataset_raw: List[dict]):
             bufsize=1,
             cwd=os.path.dirname(os.path.abspath(__file__))
         )
+        current_training_process = process
 
         for line in iter(process.stdout.readline, ''):
             if line:
@@ -438,6 +441,10 @@ def execute_training_task(model_name: str, dataset_raw: List[dict]):
         process.stdout.close()
         return_code = process.wait()
 
+        if training_job_state["status"] == "idle":
+            # Si ya fue reseteado voluntariamente por el usuario
+            return
+
         if return_code == 0:
             training_job_state["progress"] = 100
             training_job_state["status"] = "completed"
@@ -445,12 +452,15 @@ def execute_training_task(model_name: str, dataset_raw: List[dict]):
             training_job_state["logs"].append("[SISTEMA] ✅ Proceso de entrenamiento finalizado con éxito. Modelo .GGUF listo para descarga.")
         else:
             training_job_state["status"] = "error"
-            training_job_state["error_message"] = "El comando de Modal finalizó con error."
-            training_job_state["logs"].append("[ERROR] El proceso de Modal devolvió un código de error.")
+            training_job_state["error_message"] = "El comando de Modal finalizó con error o fue cancelado."
+            training_job_state["logs"].append("[ERROR] El proceso fue abortado o devolvió un código de error.")
     except Exception as e:
-        training_job_state["status"] = "error"
-        training_job_state["error_message"] = str(e)
-        training_job_state["logs"].append(f"[EXCEPTION] {str(e)}")
+        if training_job_state["status"] != "idle":
+            training_job_state["status"] = "error"
+            training_job_state["error_message"] = str(e)
+            training_job_state["logs"].append(f"[EXCEPTION] {str(e)}")
+    finally:
+        current_training_process = None
 
 
 @app.post("/api/train")
@@ -471,7 +481,25 @@ async def get_train_status():
 @app.post("/api/train/reset")
 @app.get("/api/train/reset")
 async def reset_train_status():
-    global training_job_state
+    global training_job_state, current_training_process
+    
+    # 1. Matar el proceso Python en ejecución si existe
+    if current_training_process is not None:
+        try:
+            current_training_process.terminate()
+            current_training_process.kill()
+        except Exception as e:
+            print(f"Error al terminar el proceso de entrenamiento: {e}")
+        finally:
+            current_training_process = None
+
+    # 2. Detener cualquier app activa de entrenamiento en la nube de Modal
+    try:
+        modal_path = get_modal_cmd()
+        subprocess.run([modal_path, "app", "stop", "ax-glynne-trainer"], capture_output=True, text=True, timeout=5)
+    except Exception as e:
+        print(f"Error al detener app en Modal: {e}")
+
     training_job_state = {
         "status": "idle",
         "model_name": "",
@@ -480,7 +508,7 @@ async def reset_train_status():
         "error_message": None,
         "download_command": None
     }
-    return {"status": "reset", "message": "Estado de entrenamiento reseteado correctamente."}
+    return {"status": "reset", "message": "Proceso cancelado y estado reseteado correctamente."}
 
 
 @app.get("/api/train/download")
@@ -546,10 +574,63 @@ async def test_chat_trained_model(req: TestChatRequest):
         return {"status": "success", "response": response_text}
     except Exception as e:
         print(f"Error en inferencia de prueba con Modal: {e}")
-        return {"status": "error", "message": str(e), "response": f"Respuesta de prueba: {req.prompt}"}
+# ═══════════════════════════════════════════════════════════════════════════
+# AX_LIBRARYMODEL — OPEN-WEIGHTS & HUGGING FACE DOWNLOAD BRIDGE ENDPOINTS
+# ═══════════════════════════════════════════════════════════════════════════
 
+@app.get("/api/library/catalog")
+async def get_library_catalog():
+    """Retorna el catálogo curado de modelos open-weights."""
+    return {"status": "success", "models": get_curated_open_weights_catalog()}
 
+@app.get("/api/library/search")
+async def search_library_models(q: Optional[str] = "", filter_tag: Optional[str] = "gguf", limit: Optional[int] = 24):
+    """Busca modelos en tiempo real en la API de Hugging Face."""
+    results = search_huggingface_models(query=q or "", filter_tag=filter_tag or "gguf", limit=limit or 24)
+    return {"status": "success", "models": results}
 
+@app.get("/api/library/files")
+async def get_library_model_files(model_id: str):
+    """Obtiene los archivos descargables de pesos (.gguf, .safetensors) para un modelo específico."""
+    files = get_huggingface_model_files(model_id=model_id)
+    return {"status": "success", "model_id": model_id, "files": files}
+
+@app.get("/api/library/download_proxy")
+async def download_model_weight_proxy(model_id: str, filename: str):
+    """
+    Actúa como puente de descarga (proxy streaming) directamente desde Hugging Face hacia el usuario final.
+    """
+    try:
+        import requests
+        target_url = f"{HF_RESOLVE_BASE}/{model_id}/resolve/main/{filename}"
+        headers = {"User-Agent": "AXGLYNNE-Core/1.0"}
+        
+        req = requests.get(target_url, stream=True, headers=headers, timeout=15)
+        if req.status_code != 200:
+            raise HTTPException(status_code=req.status_code, detail=f"No se pudo acceder al archivo en Hugging Face ({req.status_code})")
+
+        content_type = req.headers.get("content-type", "application/octet-stream")
+        content_length = req.headers.get("content-length")
+
+        def iter_file():
+            for chunk in req.iter_content(chunk_size=64 * 1024):
+                if chunk:
+                    yield chunk
+
+        response_headers = {
+            "Content-Disposition": f'attachment; filename="{filename}"'
+        }
+        if content_length:
+            response_headers["Content-Length"] = content_length
+
+        return StreamingResponse(
+            iter_file(),
+            media_type=content_type,
+            headers=response_headers
+        )
+    except Exception as e:
+        print(f"Error en proxy de descarga de modelo: {e}")
+        raise HTTPException(status_code=500, detail=f"Error en puente de descarga GLYNNE: {str(e)}")
 
 
 if __name__ == "__main__":
@@ -557,5 +638,6 @@ if __name__ == "__main__":
     # Render asigna dinámicamente un puerto a través de la variable de entorno PORT
     port = int(os.environ.get("PORT", 8001))
     uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
+
 
 
