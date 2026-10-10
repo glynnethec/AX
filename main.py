@@ -22,6 +22,7 @@ from AX_Voice.AX_Action_Agent import run_ax_action_agent_async
 from AX_Trainer.AX_QLoRA_Trainer import run_ax_trainer
 from AX_Trainer.AX_Dataset_Generator import generate_dataset_with_groq, extract_text_from_file_bytes
 from AX_LibraryModel.AX_HuggingFace_Bridge import get_curated_open_weights_catalog, search_huggingface_models, get_huggingface_model_files, HF_RESOLVE_BASE
+from models_provider.router import router as models_provider_router
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 
 
@@ -34,6 +35,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Integración del nuevo módulo Models Provider (build.nvidia.com Gateway)
+app.include_router(models_provider_router)
+
 
 class MessageModel(BaseModel):
     role: str
