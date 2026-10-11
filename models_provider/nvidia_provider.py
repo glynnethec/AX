@@ -145,6 +145,17 @@ class NVIDIAProviderEngine:
             timeout=120,
         )
 
+        if response.status_code == 404 and target_model != "meta/llama-3.2-11b-vision-instruct":
+            # Intentar fallback con el modelo vision insignia activo
+            fallback_payload = dict(payload)
+            fallback_payload["model"] = "meta/llama-3.2-11b-vision-instruct"
+            response = requests.post(
+                f"{self.base_url}/chat/completions",
+                json=fallback_payload,
+                headers=headers,
+                timeout=120,
+            )
+
         if response.status_code != 200:
             try:
                 err_detail = response.json()
