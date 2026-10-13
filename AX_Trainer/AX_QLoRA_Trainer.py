@@ -288,35 +288,96 @@ def entrenar_qlora_remote(model_name: str, dataset_list: list):
     return "Modelo entrenado exitosamente en Modal."
 
 
-@app.function(gpu="T4", timeout=300, volumes={"/models": volume})
+# -----------------------------------------------------------------------------
+# CACHE DE INFERENCIA EN MEMORIA / VRAM (MODAL CONTAINER LIFECYCLE)
+# -----------------------------------------------------------------------------
+_CACHED_MODEL = None
+_CACHED_TOKENIZER = None
+_CACHED_MODEL_PATH = None
+_CACHED_MTIME = 0
+
+
+@app.function(
+    gpu="T4",
+    timeout=300,
+    scaledown_window=300,
+    volumes={"/models": volume}
+)
 def inferir_modelo_remote(prompt: str, instruction: str = "Responder de forma amable y concisa."):
     import os
     import torch
     from unsloth import FastLanguageModel
     from unsloth.chat_templates import get_chat_template
 
+    global _CACHED_MODEL, _CACHED_TOKENIZER, _CACHED_MODEL_PATH, _CACHED_MTIME
+
+    # 1. Sincronizar el volumen distribuido de Modal para detectar modelos recién guardados
+    try:
+        volume.reload()
+    except Exception:
+        pass
+
     output_path = "/models/ax_model"
     model_to_load = output_path if os.path.exists(output_path) else "unsloth/Qwen2.5-0.5B-Instruct"
 
-    model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name = model_to_load,
-        max_seq_length = 2048,
-        load_in_4bit = True,
-    )
-    FastLanguageModel.for_inference(model)
+    # 2. Comprobar mtime para invalidar cache si hubo un reentrenamiento nuevo
+    current_mtime = 0
+    if os.path.exists(output_path):
+        adapter_file = os.path.join(output_path, "adapter_model.safetensors")
+        model_file = os.path.join(output_path, "model.safetensors")
+        if os.path.exists(adapter_file):
+            current_mtime = os.path.getmtime(adapter_file)
+        elif os.path.exists(model_file):
+            current_mtime = os.path.getmtime(model_file)
+        else:
+            current_mtime = os.path.getmtime(output_path)
 
-    base_check = str(getattr(getattr(model, "config", None), "_name_or_path", "")).lower()
-    if "qwen" in base_check or "qwen" in model_to_load.lower():
-        chat_template_type = "qwen-2.5"
-    elif "phi" in base_check or "phi" in model_to_load.lower():
-        chat_template_type = "phi-3"
+    need_reload = (
+        _CACHED_MODEL is None or
+        _CACHED_TOKENIZER is None or
+        _CACHED_MODEL_PATH != model_to_load or
+        _CACHED_MTIME != current_mtime
+    )
+
+    if need_reload:
+        print(f"🔄 [INFERENCIA] Cargando modelo en VRAM ({model_to_load})...")
+        if _CACHED_MODEL is not None:
+            try:
+                del _CACHED_MODEL
+                del _CACHED_TOKENIZER
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
+
+        model, tokenizer = FastLanguageModel.from_pretrained(
+            model_name = model_to_load,
+            max_seq_length = 2048,
+            load_in_4bit = True,
+        )
+        FastLanguageModel.for_inference(model)
+
+        base_check = str(getattr(getattr(model, "config", None), "_name_or_path", "")).lower()
+        if "qwen" in base_check or "qwen" in model_to_load.lower():
+            chat_template_type = "qwen-2.5"
+        elif "phi" in base_check or "phi" in model_to_load.lower():
+            chat_template_type = "phi-3"
+        else:
+            chat_template_type = "llama-3"
+
+        tokenizer = get_chat_template(
+            tokenizer,
+            chat_template = chat_template_type,
+        )
+
+        _CACHED_MODEL = model
+        _CACHED_TOKENIZER = tokenizer
+        _CACHED_MODEL_PATH = model_to_load
+        _CACHED_MTIME = current_mtime
+        print("✅ [INFERENCIA] Modelo inicializado y residente en VRAM.")
     else:
-        chat_template_type = "llama-3"
-
-    tokenizer = get_chat_template(
-        tokenizer,
-        chat_template = chat_template_type,
-    )
+        print("⚡ [INFERENCIA] CACHE HIT: Reutilizando modelo caliente en VRAM.")
+        model = _CACHED_MODEL
+        tokenizer = _CACHED_TOKENIZER
 
     sys_instruction = instruction or "Eres un asistente de IA amable, claro y profesional."
     messages = [
@@ -331,19 +392,23 @@ def inferir_modelo_remote(prompt: str, instruction: str = "Responder de forma am
         return_tensors = "pt"
     ).to("cuda")
 
-    outputs = model.generate(
-        input_ids = inputs,
-        max_new_tokens = 256,
-        use_cache = True,
-        temperature = 0.7,
-        top_p = 0.9,
-    )
+    with torch.inference_mode():
+        outputs = model.generate(
+            input_ids = inputs,
+            max_new_tokens = 180,
+            use_cache = True,
+            temperature = 0.4,
+            top_p = 0.9,
+            repetition_penalty = 1.15,
+            pad_token_id = tokenizer.eos_token_id,
+            eos_token_id = tokenizer.eos_token_id,
+        )
 
     input_length = inputs.shape[1]
     generated_tokens = outputs[0][input_length:]
     response = tokenizer.decode(generated_tokens, skip_special_tokens=True).strip()
 
-    return response
+    return response or "Respuesta procesada correctamente."
 
 
 import json

@@ -467,6 +467,19 @@ def execute_training_task(model_name: str, dataset_raw: List[dict]):
             training_job_state["status"] = "completed"
             training_job_state["download_command"] = "modal volume get ax-qlora-models ax_model/unsloth.Q4_K_M.gguf ./"
             training_job_state["logs"].append("[SISTEMA] ✅ Proceso de entrenamiento finalizado con éxito. Modelo .GGUF listo para descarga.")
+            # Pre-calentar el modelo en Modal en segundo plano para que la primera consulta de chat sea inmediata
+            try:
+                def _warmup_worker():
+                    try:
+                        import modal as m_mod
+                        f_w = m_mod.Function.from_name("ax-glynne-trainer", "inferir_modelo_remote")
+                        f_w.remote("Hola")
+                    except Exception:
+                        pass
+                import threading
+                threading.Thread(target=_warmup_worker, daemon=True).start()
+            except Exception:
+                pass
         else:
             training_job_state["status"] = "error"
             training_job_state["error_message"] = "El comando de Modal finalizó con error o fue cancelado."
@@ -599,6 +612,7 @@ async def test_chat_trained_model(req: TestChatRequest):
         return {"status": "success", "response": response_text}
     except Exception as e:
         print(f"Error en inferencia de prueba con Modal: {e}")
+        return {"status": "error", "response": f"Error al consultar el modelo en Modal: {str(e)}"}
 # ═══════════════════════════════════════════════════════════════════════════
 # AX_LIBRARYMODEL — OPEN-WEIGHTS & HUGGING FACE DOWNLOAD BRIDGE ENDPOINTS
 # ═══════════════════════════════════════════════════════════════════════════
