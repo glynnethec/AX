@@ -40,7 +40,7 @@ DEFAULT_DATASET = [
 # Definición del contenedor en la nube de Modal
 image = (
     modal.Image.debian_slim(python_version="3.10")
-    .apt_install("git")
+    .apt_install("git", "build-essential", "cmake", "curl")
     .pip_install(
         "python-dotenv",
         "torchao",
@@ -75,8 +75,15 @@ def entrenar_qlora_remote(model_name: str, dataset_list: list):
         load_in_4bit = True,
     )
 
-    # Configurar la plantilla oficial de ChatML para instruct (Qwen / Llama / etc.)
-    chat_template_type = "qwen-2.5" if "qwen" in model_name.lower() else "llama-3"
+    # Configurar la plantilla oficial de ChatML para instruct (Qwen / Llama / Phi / etc.)
+    model_name_lower = model_name.lower()
+    if "qwen" in model_name_lower:
+        chat_template_type = "qwen-2.5"
+    elif "phi" in model_name_lower:
+        chat_template_type = "phi-3"
+    else:
+        chat_template_type = "llama-3"
+
     tokenizer = get_chat_template(
         tokenizer,
         chat_template = chat_template_type,
@@ -88,8 +95,10 @@ def entrenar_qlora_remote(model_name: str, dataset_list: list):
         r = 16,
         target_modules = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
         lora_alpha = 16,
-        lora_dropout = 0.05,
+        lora_dropout = 0,
         bias = "none",
+        use_gradient_checkpointing = "unsloth",
+        random_state = 3407,
     )
 
     print("📝 [AX_TRAINER] Formateando conjunto de entrenamiento...")
@@ -183,11 +192,39 @@ def entrenar_qlora_remote(model_name: str, dataset_list: list):
     )
     trainer.train()
 
-    print("\n📦 [AX_TRAINER] Guardando modelo en formato GGUF...")
     output_path = "/models/ax_model"
-    model.save_pretrained_gguf(output_path, tokenizer, quantization_method = "q4_k_m")
+    # 1. Limpiar completamente archivos previos en el volumen de Modal para evitar tensores huérfanos de arquitecturas anteriores
+    if os.path.exists(output_path):
+        import shutil
+        print(f"🧹 [AX_TRAINER] Limpiando residuos de modelos previos en {output_path}...")
+        shutil.rmtree(output_path, ignore_errors=True)
+    os.makedirs(output_path, exist_ok=True)
+
+    # 2. Guardar SIEMPRE primero los adaptadores LoRA y tokenizer entrenados
+    print("💾 [AX_TRAINER] Guardando adaptadores LoRA y tokenizer...")
+    model.save_pretrained(output_path)
+    tokenizer.save_pretrained(output_path)
     volume.commit()
-    print("✅ [AX_TRAINER] ¡Entrenamiento y exportación finalizados con éxito!")
+    print("✅ [AX_TRAINER] Adaptadores LoRA y tokenizer guardados correctamente.")
+
+    # 3. Exportar a formato GGUF con tolerancia a fallos
+    print("\n📦 [AX_TRAINER] Exportando modelo a formato GGUF (q4_k_m)...")
+    try:
+        model.save_pretrained_gguf(output_path, tokenizer, quantization_method = "q4_k_m")
+        volume.commit()
+        print("✅ [AX_TRAINER] ¡Exportación GGUF q4_k_m finalizada con éxito!")
+    except Exception as e_gguf:
+        print(f"⚠️ [AX_TRAINER] Advertencia en exportación GGUF q4_k_m: {e_gguf}")
+        print("🔄 [AX_TRAINER] Intentando exportación alternativa GGUF (f16)...")
+        try:
+            model.save_pretrained_gguf(output_path, tokenizer, quantization_method = "f16")
+            volume.commit()
+            print("✅ [AX_TRAINER] ¡Exportación GGUF f16 finalizada con éxito!")
+        except Exception as e_gguf2:
+            print(f"⚠️ [AX_TRAINER] Omitiendo exportación GGUF: {e_gguf2}")
+            print("💡 Los adaptadores LoRA se guardaron intactos y están completamente operativos para inferencia.")
+
+    print("✅ [AX_TRAINER] ¡Entrenamiento y persistencia finalizados con éxito!")
     return "Modelo entrenado exitosamente en Modal."
 
 
@@ -199,17 +236,23 @@ def inferir_modelo_remote(prompt: str, instruction: str = "Responder de forma am
     from unsloth.chat_templates import get_chat_template
 
     output_path = "/models/ax_model"
-    if not os.path.exists(output_path):
-        output_path = "unsloth/Qwen2.5-0.5B-Instruct"
+    model_to_load = output_path if os.path.exists(output_path) else "unsloth/Qwen2.5-0.5B-Instruct"
 
     model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name = output_path,
+        model_name = model_to_load,
         max_seq_length = 2048,
         load_in_4bit = True,
     )
     FastLanguageModel.for_inference(model)
 
-    chat_template_type = "qwen-2.5" if "qwen" in output_path.lower() else "llama-3"
+    base_check = str(getattr(getattr(model, "config", None), "_name_or_path", "")).lower()
+    if "qwen" in base_check or "qwen" in model_to_load.lower():
+        chat_template_type = "qwen-2.5"
+    elif "phi" in base_check or "phi" in model_to_load.lower():
+        chat_template_type = "phi-3"
+    else:
+        chat_template_type = "llama-3"
+
     tokenizer = get_chat_template(
         tokenizer,
         chat_template = chat_template_type,

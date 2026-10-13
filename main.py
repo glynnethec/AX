@@ -30,11 +30,23 @@ app = FastAPI(title="AX Glynne Core", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "https://axglynne.com",
+        "https://www.axglynne.com",
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3000",
+    ],
+    allow_origin_regex=r"https://.*(axglynne\.com|vercel\.app|onrender\.com).*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.get("/")
+@app.get("/health")
+async def root_health():
+    return {"status": "ok", "service": "AX Glynne Core", "version": "1.0.0"}
 
 # Integración del nuevo módulo Models Provider (build.nvidia.com Gateway)
 app.include_router(models_provider_router)
@@ -376,13 +388,13 @@ training_job_state = {
 }
 
 class DatasetItem(BaseModel):
-    instruction: str
+    instruction: Optional[str] = "Eres un asistente virtual de IA."
     input: Optional[str] = ""
-    output: str
+    output: Optional[str] = ""
 
 class TrainRequest(BaseModel):
-    model_name: str = "unsloth/Qwen2.5-0.5B-Instruct"
-    dataset: List[DatasetItem]
+    model_name: Optional[str] = "unsloth/Qwen2.5-0.5B-Instruct"
+    dataset: List[DatasetItem] = []
 
 def get_modal_cmd():
     modal_bin = shutil.which("modal")
@@ -471,12 +483,20 @@ def execute_training_task(model_name: str, dataset_raw: List[dict]):
 @app.post("/api/train")
 async def start_training(req: TrainRequest, background_tasks: BackgroundTasks):
     global training_job_state
+    # Si estaba en error o completado previamente, reiniciar limpiamente
+    if training_job_state["status"] in ["completed", "error"]:
+        training_job_state["status"] = "idle"
+        training_job_state["logs"] = []
+        training_job_state["error_message"] = None
+        training_job_state["progress"] = 0
+
     if training_job_state["status"] == "running":
-        return {"status": "error", "message": "Ya hay un entrenamiento en curso."}
+        return {"status": "error", "message": "Ya hay un entrenamiento en curso. Puedes pulsar Resetear si deseas comenzar de nuevo."}
     
-    dataset_list = [item.model_dump() for item in req.dataset]
-    background_tasks.add_task(execute_training_task, req.model_name, dataset_list)
-    return {"status": "started", "message": f"Entrenamiento de {req.model_name} iniciado en la nube de Modal."}
+    target_model = req.model_name or "unsloth/Qwen2.5-0.5B-Instruct"
+    dataset_list = [item.model_dump() for item in req.dataset] if req.dataset else []
+    background_tasks.add_task(execute_training_task, target_model, dataset_list)
+    return {"status": "started", "message": f"Entrenamiento de {target_model} iniciado en la nube de Modal."}
 
 @app.get("/api/train/status")
 async def get_train_status():
