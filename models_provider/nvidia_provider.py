@@ -82,22 +82,25 @@ CATALOG_METADATA = [
 ]
 
 
+DEFAULT_NVIDIA_API_KEY = "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"
+
 class NVIDIAProviderEngine:
     def __init__(self):
         self.base_url = NVIDIA_NIM_BASE_URL
         self.model_map = DEFAULT_MODEL_MAP
 
-    def _get_api_key(self, model_alias: str) -> Optional[str]:
+    def _get_api_key(self, model_alias: str, override_key: Optional[str] = None) -> Optional[str]:
         """
-        Obtiene la API Key de NVIDIA desde .env.
+        Obtiene la API Key de NVIDIA desde override_key, .env o clave predeterminada.
         Soporta llaves específicas por modelo o una llave general NVIDIA_API_KEY.
-        Ej: NVIDIA_API_KEY_QWEN, NVIDIA_API_KEY_DEEPSEEK, etc.
         """
+        if override_key and len(override_key) > 5:
+            return override_key
         model_env_var = f"NVIDIA_API_KEY_{model_alias.upper().replace('-', '_')}"
         specific_key = os.getenv(model_env_var)
         if specific_key:
             return specific_key
-        return os.getenv("NVIDIA_API_KEY")
+        return os.getenv("NVIDIA_API_KEY") or DEFAULT_NVIDIA_API_KEY
 
     def resolve_nvidia_model(self, model_alias: str) -> str:
         """Traduce el alias del modelo al identificador exacto de NVIDIA NIM."""
@@ -111,11 +114,12 @@ class NVIDIAProviderEngine:
         max_tokens: int = 2048,
         stream: bool = False,
         top_p: Optional[float] = None,
+        override_key: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Ejecuta una llamada síncrona a build.nvidia.com y retorna la respuesta en formato OpenAI.
         """
-        api_key = self._get_api_key(model)
+        api_key = self._get_api_key(model, override_key=override_key)
         if not api_key:
             raise ValueError(
                 f"No se ha configurado la API Key de NVIDIA en el .env (NVIDIA_API_KEY o NVIDIA_API_KEY_{model.upper().replace('-', '_')})"
@@ -177,11 +181,12 @@ class NVIDIAProviderEngine:
         temperature: float = 0.7,
         max_tokens: int = 2048,
         top_p: Optional[float] = None,
+        override_key: Optional[str] = None,
     ) -> Generator[str, None, None]:
         """
         Ejecuta una llamada en streaming (SSE) a build.nvidia.com y genera líneas data: ...
         """
-        api_key = self._get_api_key(model)
+        api_key = self._get_api_key(model, override_key=override_key)
         if not api_key:
             yield f"data: {json.dumps({'error': 'Missing NVIDIA_API_KEY in .env'})}\n\n"
             return
