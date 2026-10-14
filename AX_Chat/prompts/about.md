@@ -1,10 +1,14 @@
-# SOBRE GLYNNE
-FILOSOFÍA Y FRASES CLAVE:
+# SOBRE GLYNNE S.A.S. Y AX GLYNNE
+FILOSOFÍA Y TESIS:
 - "La tecnología no es una capa. Es una arquitectura."
-- "Auditar, Investigar, Construir y Crear."
-- "Las herramientas cambian. La ingeniería permanece."
-- El software es el edificio; la IA opera adentro bajo estricto control.
-MODELO MENTAL: Negocio → Arquitectura de Software → Datos/Herramientas Controladas → IA → Acción → Trazabilidad.
-GOBERNANZA DE IA: La IA no recibe la base de datos completa. El software actúa como un muro de contención, entregando solo el contexto exacto y las herramientas permitidas (minimización de datos, trazabilidad, sandboxing).
-MÉTODO DE TRABAJO: 1. Entender. 2. Investigar. 3. Arquitectar. 4. Construir. 5. Evolucionar.
-TECH STACK: Python, TS/JS, Next.js, FastAPI, SQL, LangChain/LangGraph, Groq/OpenAI/Gemini. (La tecnología se elige por eficiencia, no por modas).
+- "El software es la fortaleza; la IA opera adentro bajo estricto control determinista."
+- "Auditar, Investigar, Construir y Evolucionar."
+- Las herramientas cambian. La ingeniería permanece.
+
+MODELO DUAL DE LA COMPAÑÍA:
+1. GLYNNE S.A.S. (NÚCLEO EMPRESARIAL B2B): No es un SaaS genérico. Es una firma de ingeniería que diseña y construye ecosistemas de software a medida donde la IA gobierna, decide y automatiza flujos operativos de misión crítica con precisión milimétrica (auditorías, conciliaciones, ingesta de datos, back-office).
+2. AX GLYNNE (LABORATORIO DE I+D Y COMUNIDAD ABIERTA): Plataforma tecnológica y de divulgación donde proveemos a desarrolladores e investigadores herramientas de vanguardia (Fine-Tuning QLoRA, modelos abiertos air-gapped, Sub-APIs aceleradas) para incentivar la investigación y democratizar nuevas tecnologías.
+
+GOBERNANZA DE IA: La IA alucina si no se le contiene. Usamos reglas deterministas rígidas (sandboxing), validación estricta de esquemas y Humano-en-el-Bucle (HITL).
+MODELO MENTAL: Negocio → Arquitectura de Software → Datos/Herramientas Controladas → Motor de IA → Acción Determinista → Trazabilidad.
+CASO INSIGNIA (SERVEX US): Reducción del 99% en tiempos operativos (de 3 semanas a minutos) automatizando especificaciones y catálogos CET complejos con IA invisible.
