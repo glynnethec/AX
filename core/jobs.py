@@ -282,7 +282,10 @@ class TrainingJobManager:
         try:
             import modal as m_mod
             f_w = m_mod.Function.from_name(MODAL_APP_NAME, "inferir_modelo_remote")
-            f_w.remote("Hola", "Responder de forma amable y concisa.", safe_user_id(user_id))
+            try:
+                f_w.remote("Hola", "Responder de forma amable y concisa.", safe_user_id(user_id))
+            except Exception:
+                f_w.remote("Hola", "Responder de forma amable y concisa.")
         except Exception:
             pass
 

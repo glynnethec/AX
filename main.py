@@ -578,11 +578,22 @@ async def test_chat_trained_model(req: TestChatRequest, user: AuthUser = Depends
     try:
         import modal
         f = modal.Function.from_name(MODAL_APP_NAME, "inferir_modelo_remote")
-        response_text = await f.remote.aio(
-            req.prompt,
-            req.instruction or "Responder la duda del cliente de forma amable y concisa.",
-            safe_user_id(user_id),
-        )
+        try:
+            response_text = await f.remote.aio(
+                req.prompt,
+                req.instruction or "Responder la duda del cliente de forma amable y concisa.",
+                safe_user_id(user_id),
+            )
+        except Exception as call_err:
+            err_msg = str(call_err)
+            if "takes from 1 to 2 positional arguments" in err_msg or "positional arguments" in err_msg:
+                # Fallback retrocompatible con la app actualmente desplegada en la nube de Modal
+                response_text = await f.remote.aio(
+                    req.prompt,
+                    req.instruction or "Responder la duda del cliente de forma amable y concisa.",
+                )
+            else:
+                raise call_err
         return {"status": "success", "response": response_text}
     except Exception as e:
         print(f"Error en inferencia de prueba con Modal: {e}")
