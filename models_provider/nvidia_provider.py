@@ -199,6 +199,7 @@ class NVIDIAProviderEngine:
             "temperature": temperature,
             "max_tokens": max_tokens,
             "stream": True,
+            "stream_options": {"include_usage": True},
         }
         if top_p is not None:
             payload["top_p"] = top_p

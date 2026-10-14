@@ -158,6 +158,30 @@ async def list_models():
         "data": formatted_data
     }
 
+def _record_token_usage(sub_key: Optional[Dict[str, Any]], tokens_used: int):
+    """Actualiza de forma segura el conteo de tokens consumidos en Supabase."""
+    if not isinstance(sub_key, dict) or not sub_key.get("id"):
+        return
+    try:
+        current_used = sub_key.get("tokens_used") or 0
+        new_tokens = current_used + max(1, int(tokens_used))
+        patch_headers = {
+            "apikey": SUPABASE_SERVICE_ROLE_KEY or SUPABASE_KEY,
+            "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY or SUPABASE_KEY}",
+            "Content-Type": "application/json",
+            "Prefer": "return=minimal"
+        }
+        requests.patch(
+            f"{SUPABASE_URL}/rest/v1/sub_api_keys?id=eq.{sub_key['id']}",
+            headers=patch_headers,
+            json={"tokens_used": new_tokens},
+            timeout=3
+        )
+        sub_key["tokens_used"] = new_tokens
+    except Exception as patch_err:
+        print(f"[GLYNNE Gateway] Aviso: No se pudo actualizar conteo de tokens en Supabase: {patch_err}")
+
+
 @router.post("/chat/completions")
 async def create_chat_completion(
     req: ChatCompletionRequest,
@@ -167,13 +191,15 @@ async def create_chat_completion(
     """
     Gateway Proxy de inferencia de modelos NVIDIA.
     Recibe la petición del cliente y la redirige de forma transparente a build.nvidia.com.
-    Audita el consumo de tokens en tiempo real en la base de datos de Supabase.
+    Audita el consumo de tokens en tiempo real en la base de datos de Supabase tanto en sync como en streaming.
     """
     messages_payload = [{"role": msg.role, "content": msg.content} for msg in req.messages]
 
     if req.stream:
         # Respuesta en Streaming SSE
         def event_generator():
+            accumulated_tokens = 0
+            prompt_estimate = sum(len(str(m.get("content", ""))) for m in messages_payload) // 4
             try:
                 for chunk in engine.stream_chat_completion(
                     model=req.model,
@@ -183,10 +209,28 @@ async def create_chat_completion(
                     top_p=req.top_p,
                     override_key=x_nvidia_api_key,
                 ):
+                    # Extraer usage reportado si NVIDIA lo envía en el chunk final
+                    if "usage" in chunk:
+                        try:
+                            clean = chunk.strip()
+                            if clean.startswith("data:"):
+                                clean = clean[5:].strip()
+                            data_obj = json.loads(clean)
+                            if isinstance(data_obj, dict) and "usage" in data_obj and data_obj["usage"]:
+                                reported = data_obj["usage"].get("total_tokens")
+                                if reported:
+                                    accumulated_tokens = int(reported)
+                        except Exception:
+                            pass
+                    else:
+                        accumulated_tokens += 1
                     yield chunk
             except Exception as e:
                 err_payload = json.dumps({"error": str(e)})
                 yield f"data: {err_payload}\n\n"
+            finally:
+                final_usage = accumulated_tokens if accumulated_tokens > 5 else max(15, prompt_estimate + accumulated_tokens)
+                _record_token_usage(sub_key, final_usage)
 
         return StreamingResponse(
             event_generator(),
@@ -213,29 +257,9 @@ async def create_chat_completion(
             override_key=x_nvidia_api_key,
         )
 
-        # Actualizar consumo de tokens en Supabase si la clave está registrada
-        if isinstance(sub_key, dict) and sub_key.get("id"):
-            try:
-                used_tokens = response_data.get("usage", {}).get("total_tokens", 150)
-                current_used = sub_key.get("tokens_used") or 0
-                new_tokens = current_used + used_tokens
-                patch_headers = {
-                    "apikey": SUPABASE_SERVICE_ROLE_KEY or SUPABASE_KEY,
-                    "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY or SUPABASE_KEY}",
-                    "Content-Type": "application/json",
-                    "Prefer": "return=minimal"
-                }
-                await run_in_threadpool(
-                    requests.patch,
-                    f"{SUPABASE_URL}/rest/v1/sub_api_keys?id=eq.{sub_key['id']}",
-                    headers=patch_headers,
-                    json={
-                        "tokens_used": new_tokens,
-                    },
-                    timeout=3
-                )
-            except Exception as patch_err:
-                print(f"[GLYNNE Gateway] Aviso: No se pudo actualizar conteo de tokens en Supabase: {patch_err}")
+        # Actualizar consumo de tokens en Supabase de forma asíncrona fuera del loop
+        used_tokens = response_data.get("usage", {}).get("total_tokens", 150)
+        await run_in_threadpool(_record_token_usage, sub_key, used_tokens)
 
         return JSONResponse(
             content=response_data,
