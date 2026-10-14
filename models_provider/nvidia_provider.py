@@ -82,7 +82,8 @@ CATALOG_METADATA = [
 ]
 
 
-DEFAULT_NVIDIA_API_KEY = "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"
+# La clave de NVIDIA se lee exclusivamente del entorno (.env / variables de Render). Nunca hardcodeada.
+DEFAULT_NVIDIA_API_KEY = None
 
 class NVIDIAProviderEngine:
     def __init__(self):
@@ -91,7 +92,7 @@ class NVIDIAProviderEngine:
 
     def _get_api_key(self, model_alias: str, override_key: Optional[str] = None) -> Optional[str]:
         """
-        Obtiene la API Key de NVIDIA desde override_key, .env o clave predeterminada.
+        Obtiene la API Key de NVIDIA desde override_key o .env.
         Soporta llaves específicas por modelo o una llave general NVIDIA_API_KEY.
         """
         if override_key and len(override_key) > 5:

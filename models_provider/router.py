@@ -1,10 +1,14 @@
 from fastapi import APIRouter, HTTPException, Header, Depends, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union
 import os
 import json
+import requests
 from .nvidia_provider import NVIDIAProviderEngine, get_available_models
+from core.auth import SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY, verify_token
+from core.rate_limit import check_rate_limit
 
 router = APIRouter(prefix="/api/v1", tags=["GLYNNE Models Provider (build.nvidia.com Gateway)"])
 
@@ -12,7 +16,8 @@ engine = NVIDIAProviderEngine()
 
 class Message(BaseModel):
     role: str
-    content: str
+    # Admite texto plano o contenido multimodal (lista de partes texto/imagen, formato OpenAI)
+    content: Union[str, List[Dict[str, Any]]]
 
 class ChatCompletionRequest(BaseModel):
     model: str
@@ -22,16 +27,46 @@ class ChatCompletionRequest(BaseModel):
     stream: Optional[bool] = False
     top_p: Optional[float] = None
 
-SUPABASE_URL = os.getenv("SUPABASE_URL", "https://qfxxspgxsvlbsbeosqgu.supabase.co")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY", "sb_publishable_MHwQqLk6xwTwRKPT0BFUKg_u67pLrCL")
+SUPABASE_KEY = SUPABASE_ANON_KEY
 
-def verify_sub_api_key(authorization: Optional[str] = Header(None)) -> Dict[str, Any]:
+# Claves demo del playground. Solo se aceptan si la petición trae además una sesión válida
+# de la plataforma (header X-Glynne-User-Token), o si ALLOW_PUBLIC_DEMO_KEYS=true.
+DEMO_KEYS = {"gly_sub_live_demo_key_99", "gly_sub_live_a8f9c2d1e4b56789"}
+ALLOW_PUBLIC_DEMO_KEYS = os.getenv("ALLOW_PUBLIC_DEMO_KEYS", "false").strip().lower() in ("1", "true", "yes")
+DEMO_RPM = 20
+
+
+def _lookup_sub_api_key(token: str, user_jwt: Optional[str]) -> requests.Response:
+    """
+    Consulta la tabla `sub_api_keys`. Usa la service-role key si está configurada (atraviesa RLS);
+    si no, usa el JWT del usuario logueado (RLS de propietario) o la anon key como último recurso.
+    """
+    if SUPABASE_SERVICE_ROLE_KEY:
+        bearer = SUPABASE_SERVICE_ROLE_KEY
+        apikey = SUPABASE_SERVICE_ROLE_KEY
+    else:
+        bearer = user_jwt or SUPABASE_KEY
+        apikey = SUPABASE_KEY
+    return requests.get(
+        f"{SUPABASE_URL}/rest/v1/sub_api_keys",
+        params={"api_key": f"eq.{token}", "select": "*"},
+        headers={"apikey": apikey, "Authorization": f"Bearer {bearer}"},
+        timeout=5,
+    )
+
+
+async def verify_sub_api_key(
+    authorization: Optional[str] = Header(None),
+    x_glynne_user_token: Optional[str] = Header(None),
+) -> Dict[str, Any]:
     """
     Verifica que la petición contenga una Sub-API Key válida.
     Valida en tiempo real contra la tabla `sub_api_keys` de Supabase:
     1. Existencia del token y usuario asociado.
     2. Estado de la clave (activa vs revocada).
     3. Cuota de tokens disponible.
+    4. Límite de peticiones por minuto (rate_limit_rpm) configurado en la clave.
+    La verificación es fail-closed: si no se puede comprobar la clave, la petición se rechaza.
     """
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(
@@ -42,8 +77,12 @@ def verify_sub_api_key(authorization: Optional[str] = Header(None)) -> Dict[str,
     if not token:
         raise HTTPException(status_code=401, detail="Sub-API Key vacía.")
 
-    # Claves predeterminadas de prueba o demo
-    if token in ("gly_sub_live_demo_key_99", "gly_sub_live_a8f9c2d1e4b56789") or token.startswith("gly_test_"):
+    # Claves predeterminadas de prueba o demo (solo para usuarios logueados en el playground)
+    if token in DEMO_KEYS or token.startswith("gly_test_"):
+        platform_user = await verify_token(x_glynne_user_token) if x_glynne_user_token else None
+        if not platform_user and not ALLOW_PUBLIC_DEMO_KEYS:
+            raise HTTPException(status_code=401, detail="Las claves demo solo funcionan dentro del playground de GLYNNE. Crea tu propia Sub-API Key.")
+        check_rate_limit(f"demo:{platform_user.id if platform_user else token}", limit=DEMO_RPM, window_seconds=60)
         return {
             "id": None,
             "api_key": token,
@@ -55,45 +94,34 @@ def verify_sub_api_key(authorization: Optional[str] = Header(None)) -> Dict[str,
 
     # Consulta a Supabase REST API
     try:
-        headers = {
-            "apikey": SUPABASE_KEY,
-            "Authorization": f"Bearer {SUPABASE_KEY}",
-        }
-        res = requests.get(
-            f"{SUPABASE_URL}/rest/v1/sub_api_keys?api_key=eq.{token}&select=*",
-            headers=headers,
-            timeout=5
+        res = await run_in_threadpool(_lookup_sub_api_key, token, x_glynne_user_token)
+    except requests.RequestException:
+        raise HTTPException(status_code=503, detail="No se pudo verificar la Sub-API Key en este momento. Intenta de nuevo.")
+
+    if res.status_code != 200:
+        raise HTTPException(status_code=503, detail="Error de verificación de Sub-API Key.")
+
+    records = res.json()
+    if not records:
+        raise HTTPException(status_code=401, detail="Sub-API Key no registrada o inválida en la base de datos de GLYNNE.")
+
+    record = records[0]
+    status = record.get("status", "active")
+    if status == "revoked":
+        raise HTTPException(status_code=403, detail="Esta Sub-API Key ha sido revocada o desactivada por el usuario.")
+
+    tokens_used = record.get("tokens_used") or 0
+    monthly_quota = record.get("monthly_quota") or 5000000
+    if tokens_used >= monthly_quota:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Cuota mensual de tokens agotada para esta Sub-API Key ({tokens_used:,} / {monthly_quota:,} tokens consumidos)."
         )
-        if res.status_code == 200:
-            records = res.json()
-            if records and len(records) > 0:
-                record = records[0]
-                status = record.get("status", "active")
-                if status == "revoked":
-                    raise HTTPException(status_code=403, detail="Esta Sub-API Key ha sido revocada o desactivada por el usuario.")
 
-                tokens_used = record.get("tokens_used") or 0
-                monthly_quota = record.get("monthly_quota") or 5000000
-                if tokens_used >= monthly_quota:
-                    raise HTTPException(
-                        status_code=429,
-                        detail=f"Cuota mensual de tokens agotada para esta Sub-API Key ({tokens_used:,} / {monthly_quota:,} tokens consumidos)."
-                    )
-
-                return record
-            else:
-                raise HTTPException(status_code=401, detail="Sub-API Key no registrada o inválida en la base de datos de GLYNNE.")
-        else:
-            # Fallback tolerante a fallos si el formato es estándar gly_sub_live_
-            if token.startswith("gly_sub_live_"):
-                return {"id": None, "api_key": token, "tokens_used": 0, "status": "active"}
-            raise HTTPException(status_code=401, detail="Error de verificación de Sub-API Key.")
-    except HTTPException:
-        raise
-    except Exception as e:
-        if token.startswith("gly_sub_live_"):
-            return {"id": None, "api_key": token, "tokens_used": 0, "status": "active"}
-        raise HTTPException(status_code=500, detail=f"Error validando Sub-API Key en Supabase: {str(e)}")
+    rpm = record.get("rate_limit_rpm") or 120
+    check_rate_limit(f"subkey:{record.get('id') or token}", limit=int(rpm), window_seconds=60,
+                     message=f"Límite de {rpm} solicitudes por minuto alcanzado para esta Sub-API Key.")
+    return record
 
 @router.options("/chat/completions")
 async def chat_completions_options():
@@ -102,7 +130,7 @@ async def chat_completions_options():
         headers={
             "Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type, Authorization",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization, X-NVIDIA-API-KEY, X-Glynne-User-Token",
         },
     )
 
@@ -174,7 +202,8 @@ async def create_chat_completion(
 
     # Respuesta Síncrona JSON
     try:
-        response_data = engine.create_chat_completion(
+        response_data = await run_in_threadpool(
+            engine.create_chat_completion,
             model=req.model,
             messages=messages_payload,
             temperature=req.temperature or 0.7,
@@ -191,12 +220,13 @@ async def create_chat_completion(
                 current_used = sub_key.get("tokens_used") or 0
                 new_tokens = current_used + used_tokens
                 patch_headers = {
-                    "apikey": SUPABASE_KEY,
-                    "Authorization": f"Bearer {SUPABASE_KEY}",
+                    "apikey": SUPABASE_SERVICE_ROLE_KEY or SUPABASE_KEY,
+                    "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY or SUPABASE_KEY}",
                     "Content-Type": "application/json",
                     "Prefer": "return=minimal"
                 }
-                requests.patch(
+                await run_in_threadpool(
+                    requests.patch,
                     f"{SUPABASE_URL}/rest/v1/sub_api_keys?id=eq.{sub_key['id']}",
                     headers=patch_headers,
                     json={
@@ -227,7 +257,7 @@ async def provider_health():
     """
     Verifica el estado del módulo Models Provider y las credenciales del .env.
     """
-    nvidia_key = os.getenv("NVIDIA_API_KEY") or "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"
+    nvidia_key = os.getenv("NVIDIA_API_KEY")
     has_key = bool(nvidia_key and len(nvidia_key) > 5)
     return {
         "status": "active" if has_key else "configured_without_api_key",

@@ -119,8 +119,18 @@ volume = modal.Volume.from_name("ax-qlora-models", create_if_missing=True)
 app = modal.App("ax-glynne-trainer", image=image)
 
 
+def _user_model_path(user_id: str = "") -> str:
+    """
+    Ruta aislada por usuario dentro del volumen de Modal.
+    Sin user_id se conserva la ruta legacy compartida (compatibilidad hacia atrás).
+    """
+    import re as _re
+    safe = _re.sub(r"[^a-zA-Z0-9_-]", "", user_id or "")[:64]
+    return f"/models/users/{safe}/ax_model" if safe else "/models/ax_model"
+
+
 @app.function(gpu="T4", timeout=1800, volumes={"/models": volume})
-def entrenar_qlora_remote(model_name: str, dataset_list: list):
+def entrenar_qlora_remote(model_name: str, dataset_list: list, user_id: str = ""):
     import torch
     from unsloth import FastLanguageModel
     from unsloth.chat_templates import get_chat_template
@@ -252,7 +262,7 @@ def entrenar_qlora_remote(model_name: str, dataset_list: list):
     )
     trainer.train()
 
-    output_path = "/models/ax_model"
+    output_path = _user_model_path(user_id)
     # 1. Limpiar completamente archivos previos en el volumen de Modal para evitar tensores huérfanos de arquitecturas anteriores
     if os.path.exists(output_path):
         import shutil
@@ -303,7 +313,7 @@ _CACHED_MTIME = 0
     scaledown_window=300,
     volumes={"/models": volume}
 )
-def inferir_modelo_remote(prompt: str, instruction: str = "Responder de forma amable y concisa."):
+def inferir_modelo_remote(prompt: str, instruction: str = "Responder de forma amable y concisa.", user_id: str = ""):
     import os
     import torch
     from unsloth import FastLanguageModel
@@ -317,7 +327,7 @@ def inferir_modelo_remote(prompt: str, instruction: str = "Responder de forma am
     except Exception:
         pass
 
-    output_path = "/models/ax_model"
+    output_path = _user_model_path(user_id)
     model_to_load = output_path if os.path.exists(output_path) else "unsloth/Qwen2.5-0.5B-Instruct"
 
     # 2. Comprobar mtime para invalidar cache si hubo un reentrenamiento nuevo
@@ -414,19 +424,26 @@ def inferir_modelo_remote(prompt: str, instruction: str = "Responder de forma am
 import json
 
 @app.local_entrypoint()
-def main(model_name: str = DEFAULT_MODEL, dataset_json: str = None):
+def main(model_name: str = DEFAULT_MODEL, dataset_json: str = None, dataset_file: str = None, user_id: str = ""):
     dataset_list = DEFAULT_DATASET
-    if dataset_json:
+    if dataset_file:
+        try:
+            with open(dataset_file, "r", encoding="utf-8") as f:
+                dataset_list = json.load(f)
+        except Exception as e:
+            print(f"⚠️ Error leyendo dataset desde archivo: {e}")
+    elif dataset_json:
         try:
             dataset_list = json.loads(dataset_json)
         except Exception as e:
             print(f"⚠️ Error parseando dataset JSON: {e}")
 
     print(f"☁️ [AX_TRAINER] Iniciando entrenamiento de {model_name}...")
-    resultado = entrenar_qlora_remote.remote(model_name, dataset_list)
+    resultado = entrenar_qlora_remote.remote(model_name, dataset_list, user_id or "")
     print(resultado)
+    volume_path = _user_model_path(user_id).replace("/models/", "", 1)
     print("\n💡 Para descargar el modelo .gguf a tu equipo ejecuta:")
-    print("   modal volume get ax-qlora-models ax_model/unsloth.Q4_K_M.gguf ./")
+    print(f"   modal volume get ax-qlora-models {volume_path}/unsloth.Q4_K_M.gguf ./")
 
 
 def run_ax_trainer(model_name: str = DEFAULT_MODEL, dataset: list = DEFAULT_DATASET):
