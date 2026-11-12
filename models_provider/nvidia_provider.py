@@ -110,6 +110,17 @@ class NVIDIAProviderEngine:
     def __init__(self):
         self.base_url = NVIDIA_NIM_BASE_URL
         self.model_map = DEFAULT_MODEL_MAP
+        self._session = requests.Session()
+
+    def _has_images(self, messages: List[Dict[str, Any]]) -> bool:
+        """Detecta si el payload contiene imágenes multimodales (requiere motor de visión)."""
+        for m in messages:
+            content = m.get("content")
+            if isinstance(content, list):
+                for part in content:
+                    if isinstance(part, dict) and part.get("type") == "image_url":
+                        return True
+        return False
 
     def _get_api_key(self, model_alias: str, override_key: Optional[str] = None) -> Optional[str]:
         """
@@ -149,7 +160,7 @@ class NVIDIAProviderEngine:
             }
             if top_p is not None:
                 payload["top_p"] = top_p
-            res = requests.post(
+            res = self._session.post(
                 "https://api.groq.com/openai/v1/chat/completions",
                 headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
                 json=payload,
@@ -190,38 +201,44 @@ class NVIDIAProviderEngine:
         if top_p is not None:
             payload["top_p"] = top_p
 
+        has_images = self._has_images(messages)
         data = None
         STABLE_FALLBACK_MODEL = "meta/llama-3.2-90b-vision-instruct"
 
-        if api_key:
+        # Fast-path: Para texto puro sin imágenes y sin override key manual, usar LPU (< 1s de latencia)
+        if not has_images and not override_key:
+            data = self._call_fast_groq_engine(model, messages, temperature, max_tokens, top_p)
+
+        # Ruta NVIDIA NIM (para visión multimodal o si LPU no está disponible)
+        if not data and api_key:
             headers = {
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
                 "Accept": "application/json",
             }
             try:
-                response = requests.post(
+                response = self._session.post(
                     f"{self.base_url}/chat/completions",
                     json=payload,
                     headers=headers,
-                    timeout=15,
+                    timeout=20 if has_images else 10,
                 )
                 if response.status_code in (404, 410) and target_model != STABLE_FALLBACK_MODEL:
                     fallback_payload = dict(payload)
                     fallback_payload["model"] = STABLE_FALLBACK_MODEL
-                    response = requests.post(
+                    response = self._session.post(
                         f"{self.base_url}/chat/completions",
                         json=fallback_payload,
                         headers=headers,
-                        timeout=15,
+                        timeout=20 if has_images else 10,
                     )
                 if response.status_code == 200:
                     data = response.json()
             except Exception as net_err:
-                print(f"[GLYNNE Gateway] Aviso: NVIDIA NIM lento o no disponible ({net_err}). Conmutando a motor LPU...")
+                print(f"[GLYNNE Gateway] Aviso: NVIDIA NIM timeout/error ({net_err}).")
 
-        # Si NVIDIA no respondió con 200 o tardó más de 15s, activar motor LPU de alta velocidad
-        if not data:
+        # Último recurso si NVIDIA falló y no se había intentado LPU aún
+        if not data and not has_images:
             data = self._call_fast_groq_engine(model, messages, temperature, max_tokens, top_p)
 
         if not data:
@@ -275,26 +292,10 @@ class NVIDIAProviderEngine:
             "Accept": "text/event-stream",
         }
 
-        # Intentar streaming con NVIDIA primero
-        stream_success = False
-        try:
-            response = requests.post(
-                f"{self.base_url}/chat/completions",
-                json=payload,
-                headers=headers,
-                stream=True,
-                timeout=15,
-            )
-            if response.status_code == 200:
-                stream_success = True
-                for line in response.iter_lines(decode_unicode=True):
-                    if line:
-                        yield f"{line}\n"
-        except Exception:
-            pass
+        has_images = self._has_images(messages)
 
-        # Fallback ultra-rápido a streaming LPU si NVIDIA no respondió en 15s
-        if not stream_success:
+        # Fast-path streaming: Para texto puro, usar motor LPU directamente (< 0.3s primer token)
+        if not has_images and not override_key:
             groq_key = os.getenv("GROQ_API_KEY") or os.getenv("GROQ_RESPONDER_API_KEY")
             if groq_key:
                 try:
@@ -305,7 +306,51 @@ class NVIDIAProviderEngine:
                         "max_tokens": max_tokens,
                         "stream": True,
                     }
-                    g_res = requests.post(
+                    g_res = self._session.post(
+                        "https://api.groq.com/openai/v1/chat/completions",
+                        headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
+                        json=groq_payload,
+                        stream=True,
+                        timeout=15,
+                    )
+                    if g_res.status_code == 200:
+                        for line in g_res.iter_lines(decode_unicode=True):
+                            if line:
+                                yield f"{line}\n"
+                        return
+                except Exception:
+                    pass
+
+        # Ruta NVIDIA NIM (para visión multimodal o fallback)
+        stream_success = False
+        try:
+            response = self._session.post(
+                f"{self.base_url}/chat/completions",
+                json=payload,
+                headers=headers,
+                stream=True,
+                timeout=20 if has_images else 10,
+            )
+            if response.status_code == 200:
+                stream_success = True
+                for line in response.iter_lines(decode_unicode=True):
+                    if line:
+                        yield f"{line}\n"
+        except Exception:
+            pass
+
+        if not stream_success and not has_images:
+            groq_key = os.getenv("GROQ_API_KEY") or os.getenv("GROQ_RESPONDER_API_KEY")
+            if groq_key:
+                try:
+                    groq_payload = {
+                        "model": "qwen/qwen3.8-27b",
+                        "messages": messages,
+                        "temperature": temperature,
+                        "max_tokens": max_tokens,
+                        "stream": True,
+                    }
+                    g_res = self._session.post(
                         "https://api.groq.com/openai/v1/chat/completions",
                         headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
                         json=groq_payload,
