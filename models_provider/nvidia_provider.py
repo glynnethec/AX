@@ -128,6 +128,42 @@ class NVIDIAProviderEngine:
         """Traduce el alias del modelo al identificador exacto de NVIDIA NIM."""
         return self.model_map.get(model_alias, model_alias)
 
+    def _call_fast_groq_engine(
+        self,
+        model: str,
+        messages: List[Dict[str, str]],
+        temperature: float = 0.7,
+        max_tokens: int = 2048,
+        top_p: Optional[float] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Fallback ultra-resiliente a inferencia LPU de alta velocidad si NVIDIA presenta timeout o congestión."""
+        groq_key = os.getenv("GROQ_API_KEY") or os.getenv("GROQ_RESPONDER_API_KEY")
+        if not groq_key:
+            return None
+        try:
+            payload = {
+                "model": "qwen/qwen3.8-27b",
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            }
+            if top_p is not None:
+                payload["top_p"] = top_p
+            res = requests.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
+                json=payload,
+                timeout=15,
+            )
+            if res.status_code == 200:
+                data = res.json()
+                data["model"] = model
+                data["owned_by"] = "axglynne-ai-provider"
+                return data
+        except Exception as e:
+            print(f"[GLYNNE Gateway] Aviso: Fallback LPU error: {e}")
+        return None
+
     def create_chat_completion(
         self,
         model: str,
@@ -140,13 +176,9 @@ class NVIDIAProviderEngine:
     ) -> Dict[str, Any]:
         """
         Ejecuta una llamada síncrona a build.nvidia.com y retorna la respuesta en formato OpenAI.
+        Cuenta con conmutación por error automática para garantizar alta disponibilidad.
         """
         api_key = self._get_api_key(model, override_key=override_key)
-        if not api_key:
-            raise ValueError(
-                f"No se ha configurado la API Key de NVIDIA en el .env (NVIDIA_API_KEY o NVIDIA_API_KEY_{model.upper().replace('-', '_')})"
-            )
-
         target_model = self.resolve_nvidia_model(model)
         payload = {
             "model": target_model,
@@ -158,42 +190,52 @@ class NVIDIAProviderEngine:
         if top_p is not None:
             payload["top_p"] = top_p
 
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        }
-
-        response = requests.post(
-            f"{self.base_url}/chat/completions",
-            json=payload,
-            headers=headers,
-            timeout=120,
-        )
-
+        data = None
         STABLE_FALLBACK_MODEL = "meta/llama-3.2-90b-vision-instruct"
 
-        if response.status_code in (404, 410) and target_model != STABLE_FALLBACK_MODEL:
-            # Si el modelo fue retirado (410) o no existe (404), fallback transparente a modelo activo y probado
-            fallback_payload = dict(payload)
-            fallback_payload["model"] = STABLE_FALLBACK_MODEL
-            response = requests.post(
-                f"{self.base_url}/chat/completions",
-                json=fallback_payload,
-                headers=headers,
-                timeout=120,
-            )
-
-        if response.status_code != 200:
+        if api_key:
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            }
             try:
-                err_detail = response.json()
-            except Exception:
-                err_detail = response.text
-            raise RuntimeError(f"NVIDIA API Error [{response.status_code}]: {err_detail}")
+                response = requests.post(
+                    f"{self.base_url}/chat/completions",
+                    json=payload,
+                    headers=headers,
+                    timeout=15,
+                )
+                if response.status_code in (404, 410) and target_model != STABLE_FALLBACK_MODEL:
+                    fallback_payload = dict(payload)
+                    fallback_payload["model"] = STABLE_FALLBACK_MODEL
+                    response = requests.post(
+                        f"{self.base_url}/chat/completions",
+                        json=fallback_payload,
+                        headers=headers,
+                        timeout=15,
+                    )
+                if response.status_code == 200:
+                    data = response.json()
+            except Exception as net_err:
+                print(f"[GLYNNE Gateway] Aviso: NVIDIA NIM lento o no disponible ({net_err}). Conmutando a motor LPU...")
 
-        data = response.json()
+        # Si NVIDIA no respondió con 200 o tardó más de 15s, activar motor LPU de alta velocidad
+        if not data:
+            data = self._call_fast_groq_engine(model, messages, temperature, max_tokens, top_p)
+
+        if not data:
+            raise RuntimeError("Servicio de inferencia temporalmente no disponible. Por favor reintenta.")
+
+        # Asegurar que choices[0].message.content contenga siempre texto legible
+        if isinstance(data, dict) and "choices" in data:
+            for ch in data.get("choices", []):
+                msg = ch.get("message", {})
+                if not msg.get("content") and msg.get("reasoning_content"):
+                    msg["content"] = msg["reasoning_content"]
+
         if isinstance(data, dict) and "model" in data:
-            data["model"] = model  # Firma con la marca del cliente/GLYNNE
+            data["model"] = model
             data["owned_by"] = "axglynne-ai-provider"
 
         return data
@@ -233,29 +275,50 @@ class NVIDIAProviderEngine:
             "Accept": "text/event-stream",
         }
 
-        response = requests.post(
-            f"{self.base_url}/chat/completions",
-            json=payload,
-            headers=headers,
-            stream=True,
-            timeout=120,
-        )
-
-        STABLE_FALLBACK_MODEL = "meta/llama-3.2-90b-vision-instruct"
-        if response.status_code in (404, 410) and target_model != STABLE_FALLBACK_MODEL:
-            fallback_payload = dict(payload)
-            fallback_payload["model"] = STABLE_FALLBACK_MODEL
+        # Intentar streaming con NVIDIA primero
+        stream_success = False
+        try:
             response = requests.post(
                 f"{self.base_url}/chat/completions",
-                json=fallback_payload,
+                json=payload,
                 headers=headers,
                 stream=True,
-                timeout=120,
+                timeout=15,
             )
+            if response.status_code == 200:
+                stream_success = True
+                for line in response.iter_lines(decode_unicode=True):
+                    if line:
+                        yield f"{line}\n"
+        except Exception:
+            pass
 
-        for line in response.iter_lines(decode_unicode=True):
-            if line:
-                yield f"{line}\n"
+        # Fallback ultra-rápido a streaming LPU si NVIDIA no respondió en 15s
+        if not stream_success:
+            groq_key = os.getenv("GROQ_API_KEY") or os.getenv("GROQ_RESPONDER_API_KEY")
+            if groq_key:
+                try:
+                    groq_payload = {
+                        "model": "qwen/qwen3.8-27b",
+                        "messages": messages,
+                        "temperature": temperature,
+                        "max_tokens": max_tokens,
+                        "stream": True,
+                    }
+                    g_res = requests.post(
+                        "https://api.groq.com/openai/v1/chat/completions",
+                        headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
+                        json=groq_payload,
+                        stream=True,
+                        timeout=15,
+                    )
+                    if g_res.status_code == 200:
+                        for line in g_res.iter_lines(decode_unicode=True):
+                            if line:
+                                yield f"{line}\n"
+                        return
+                except Exception:
+                    pass
 
 def get_available_models() -> List[Dict[str, Any]]:
     """Devuelve el catálogo de modelos disponibles."""
