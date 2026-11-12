@@ -12,8 +12,8 @@ NVIDIA_NIM_BASE_URL = os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia
 # Mapeo de IDs públicos de GLYNNE a los nombres exactos de modelos activos en build.nvidia.com
 DEFAULT_MODEL_MAP: Dict[str, str] = {
     # Alias para retrocompatibilidad con scripts existentes
-    "llama-3.2-11b-vision": "meta/llama-3.1-8b-instruct",
-    "llama-3.2-90b-vision": "meta/llama-3.3-70b-instruct",
+    "llama-3.2-11b-vision": "nv-mistralai/mistral-nemo-12b-instruct",
+    "llama-3.2-90b-vision": "nv-mistralai/mistral-nemo-12b-instruct",
 
     # Modelos Meta Llama activos
     "llama-3.3-70b": "meta/llama-3.3-70b-instruct",
