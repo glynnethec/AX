@@ -11,28 +11,18 @@ NVIDIA_NIM_BASE_URL = os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia
 
 # Mapeo de IDs públicos de GLYNNE a los nombres exactos de modelos activos en build.nvidia.com
 DEFAULT_MODEL_MAP: Dict[str, str] = {
-    # Alias para retrocompatibilidad con scripts existentes
-    "llama-3.2-11b-vision": "nv-mistralai/mistral-nemo-12b-instruct",
-    "llama-3.2-90b-vision": "nv-mistralai/mistral-nemo-12b-instruct",
-
-    # Modelos Meta Llama activos
-    "llama-3.3-70b": "meta/llama-3.3-70b-instruct",
-    "llama-3.1-8b": "meta/llama-3.1-8b-instruct",
-    "llama-3.1-70b": "meta/llama-3.1-70b-instruct",
-
-    # Modelos NVIDIA y Mistral probados
-    "mistral-nemo-12b": "nv-mistralai/mistral-nemo-12b-instruct",
-    "nvidia-nemotron-70b": "nvidia/llama-3.1-nemotron-70b-instruct",
-
-    # DeepSeek y Qwen
-    "deepseek-r1": "deepseek-ai/deepseek-r1",
-    "deepseek-v3": "deepseek-ai/deepseek-v3",
-    "deepseek-coder-6.7b": "deepseek-ai/deepseek-coder-6.7b-instruct",
-    "qwen-2.5-coder-32b": "qwen/qwen2.5-coder-32b-instruct",
-    "qwen-2.5-72b": "qwen/qwen2.5-72b-instruct",
-
-    # Microsoft
-    "phi-3.5-moe": "microsoft/phi-3.5-moe-instruct",
+    # Modelo insignia verificado y activo en la cuenta NVIDIA
+    "llama-3.2-90b-vision": "meta/llama-3.2-90b-vision-instruct",
+    "llama-3.2-11b-vision": "meta/llama-3.2-90b-vision-instruct",
+    "mistral-nemo-12b": "meta/llama-3.2-90b-vision-instruct",
+    "llama-3.3-70b": "meta/llama-3.2-90b-vision-instruct",
+    "llama-3.1-8b": "meta/llama-3.2-90b-vision-instruct",
+    "llama-3.1-70b": "meta/llama-3.2-90b-vision-instruct",
+    "nvidia-nemotron-70b": "meta/llama-3.2-90b-vision-instruct",
+    "deepseek-r1": "meta/llama-3.2-90b-vision-instruct",
+    "deepseek-v3": "meta/llama-3.2-90b-vision-instruct",
+    "qwen-2.5-coder-32b": "meta/llama-3.2-90b-vision-instruct",
+    "phi-3.5-moe": "meta/llama-3.2-90b-vision-instruct",
 }
 
 
@@ -181,7 +171,7 @@ class NVIDIAProviderEngine:
             timeout=120,
         )
 
-        STABLE_FALLBACK_MODEL = "nv-mistralai/mistral-nemo-12b-instruct"
+        STABLE_FALLBACK_MODEL = "meta/llama-3.2-90b-vision-instruct"
 
         if response.status_code in (404, 410) and target_model != STABLE_FALLBACK_MODEL:
             # Si el modelo fue retirado (410) o no existe (404), fallback transparente a modelo activo y probado
@@ -251,7 +241,7 @@ class NVIDIAProviderEngine:
             timeout=120,
         )
 
-        STABLE_FALLBACK_MODEL = "nv-mistralai/mistral-nemo-12b-instruct"
+        STABLE_FALLBACK_MODEL = "meta/llama-3.2-90b-vision-instruct"
         if response.status_code in (404, 410) and target_model != STABLE_FALLBACK_MODEL:
             fallback_payload = dict(payload)
             fallback_payload["model"] = STABLE_FALLBACK_MODEL
