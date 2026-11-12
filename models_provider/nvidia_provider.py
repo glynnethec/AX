@@ -11,12 +11,27 @@ NVIDIA_NIM_BASE_URL = os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia
 
 # Mapeo de IDs públicos de GLYNNE a los nombres exactos de modelos activos en build.nvidia.com
 DEFAULT_MODEL_MAP: Dict[str, str] = {
-    "llama-3.2-11b-vision": "meta/llama-3.2-11b-vision-instruct",
-    "llama-3.2-90b-vision": "meta/llama-3.2-90b-vision-instruct",
-    "deepseek-coder-6.7b": "deepseek-ai/deepseek-coder-6.7b-instruct",
-    "deepseek-v4-flash": "deepseek-ai/deepseek-v4.1-flash",
-    "nvidia-nemotron-70b": "nvidia/llama-3.1-nemotron-70b-instruct",
+    # Alias para retrocompatibilidad con scripts existentes
+    "llama-3.2-11b-vision": "meta/llama-3.1-8b-instruct",
+    "llama-3.2-90b-vision": "meta/llama-3.3-70b-instruct",
+
+    # Modelos Meta Llama activos
+    "llama-3.3-70b": "meta/llama-3.3-70b-instruct",
+    "llama-3.1-8b": "meta/llama-3.1-8b-instruct",
+    "llama-3.1-70b": "meta/llama-3.1-70b-instruct",
+
+    # Modelos NVIDIA y Mistral probados
     "mistral-nemo-12b": "nv-mistralai/mistral-nemo-12b-instruct",
+    "nvidia-nemotron-70b": "nvidia/llama-3.1-nemotron-70b-instruct",
+
+    # DeepSeek y Qwen
+    "deepseek-r1": "deepseek-ai/deepseek-r1",
+    "deepseek-v3": "deepseek-ai/deepseek-v3",
+    "deepseek-coder-6.7b": "deepseek-ai/deepseek-coder-6.7b-instruct",
+    "qwen-2.5-coder-32b": "qwen/qwen2.5-coder-32b-instruct",
+    "qwen-2.5-72b": "qwen/qwen2.5-72b-instruct",
+
+    # Microsoft
     "phi-3.5-moe": "microsoft/phi-3.5-moe-instruct",
 }
 
@@ -24,52 +39,68 @@ DEFAULT_MODEL_MAP: Dict[str, str] = {
 # Metadatos del catálogo de modelos
 CATALOG_METADATA = [
     {
+        "id": "llama-3.3-70b",
+        "name": "Meta Llama 3.3 70B Instruct",
+        "nvidia_target": "meta/llama-3.3-70b-instruct",
+        "provider": "Meta AI / NVIDIA NIM",
+        "description": "El modelo insignia de Meta Llama más avanzado para razonamiento complejo y agentes.",
+        "context_length": 131072,
+    },
+    {
+        "id": "llama-3.1-8b",
+        "name": "Meta Llama 3.1 8B Instruct",
+        "nvidia_target": "meta/llama-3.1-8b-instruct",
+        "provider": "Meta AI / NVIDIA NIM",
+        "description": "Modelo de ultra baja latencia, eficiente y versátil para tareas conversacionales.",
+        "context_length": 131072,
+    },
+    {
         "id": "llama-3.2-11b-vision",
-        "name": "Meta Llama 3.2 11B Vision",
-        "nvidia_target": "meta/llama-3.2-11b-vision-instruct",
+        "name": "Meta Llama 3.1 (Compatibilidad)",
+        "nvidia_target": "meta/llama-3.1-8b-instruct",
         "provider": "Meta AI / NVIDIA NIM",
-        "description": "Modelo multimodal avanzado de visión e imágenes en tiempo real.",
-        "context_length": 131072,
-    },
-    {
-        "id": "llama-3.2-90b-vision",
-        "name": "Meta Llama 3.2 90B Vision",
-        "nvidia_target": "meta/llama-3.2-90b-vision-instruct",
-        "provider": "Meta AI / NVIDIA NIM",
-        "description": "Modelo visión insignia para análisis complejo de imágenes, gráficos y PDFs.",
-        "context_length": 131072,
-    },
-    {
-        "id": "deepseek-coder-6.7b",
-        "name": "DeepSeek Coder 6.7B",
-        "nvidia_target": "deepseek-ai/deepseek-coder-6.7b-instruct",
-        "provider": "DeepSeek AI / NVIDIA NIM",
-        "description": "Especializado en autocompletado de código y refactorización ultrarrápida.",
-        "context_length": 65536,
-    },
-    {
-        "id": "deepseek-v4-flash",
-        "name": "DeepSeek V4.1 Flash",
-        "nvidia_target": "deepseek-ai/deepseek-v4.1-flash",
-        "provider": "DeepSeek AI / NVIDIA NIM",
-        "description": "Modelo general de ultra baja latencia y alta precisión.",
-        "context_length": 65536,
-    },
-    {
-        "id": "nvidia-nemotron-70b",
-        "name": "NVIDIA Nemotron 70B",
-        "nvidia_target": "nvidia/llama-3.1-nemotron-70b-instruct",
-        "provider": "NVIDIA NIM",
-        "description": "Modelo optimizado por NVIDIA con RLAIF para alta fidelidad de respuesta.",
+        "description": "Ruta de compatibilidad retroactiva optimizada con Llama 3.1.",
         "context_length": 131072,
     },
     {
         "id": "mistral-nemo-12b",
-        "name": "Mistral NeMo 12B",
+        "name": "Mistral NeMo 12B Instruct",
         "nvidia_target": "nv-mistralai/mistral-nemo-12b-instruct",
         "provider": "Mistral AI / NVIDIA NIM",
-        "description": "Modelo ligero y rápido optimizado para agentes conversacionales en tiempo real.",
+        "description": "Modelo insignia optimizado por Mistral y NVIDIA para respuestas rápidas y precisas.",
         "context_length": 131072,
+    },
+    {
+        "id": "nvidia-nemotron-70b",
+        "name": "NVIDIA Nemotron 70B Instruct",
+        "nvidia_target": "nvidia/llama-3.1-nemotron-70b-instruct",
+        "provider": "NVIDIA NIM",
+        "description": "Modelo optimizado por NVIDIA con RLAIF para máxima fidelidad y apego a instrucciones.",
+        "context_length": 131072,
+    },
+    {
+        "id": "qwen-2.5-coder-32b",
+        "name": "Qwen 2.5 Coder 32B Instruct",
+        "nvidia_target": "qwen/qwen2.5-coder-32b-instruct",
+        "provider": "Qwen / NVIDIA NIM",
+        "description": "Líder en generación, autocompletado, refactorización y depuración de código.",
+        "context_length": 131072,
+    },
+    {
+        "id": "deepseek-r1",
+        "name": "DeepSeek R1 Reasoning",
+        "nvidia_target": "deepseek-ai/deepseek-r1",
+        "provider": "DeepSeek AI / NVIDIA NIM",
+        "description": "Modelo de razonamiento paso a paso de alto nivel para problemas complejos y matemáticas.",
+        "context_length": 65536,
+    },
+    {
+        "id": "deepseek-v3",
+        "name": "DeepSeek V3",
+        "nvidia_target": "deepseek-ai/deepseek-v3",
+        "provider": "DeepSeek AI / NVIDIA NIM",
+        "description": "Modelo fundacional de arquitectura MoE de gran capacidad y velocidad.",
+        "context_length": 65536,
     },
     {
         "id": "phi-3.5-moe",
@@ -150,10 +181,12 @@ class NVIDIAProviderEngine:
             timeout=120,
         )
 
-        if response.status_code == 404 and target_model != "meta/llama-3.2-11b-vision-instruct":
-            # Intentar fallback con el modelo vision insignia activo
+        STABLE_FALLBACK_MODEL = "nv-mistralai/mistral-nemo-12b-instruct"
+
+        if response.status_code in (404, 410) and target_model != STABLE_FALLBACK_MODEL:
+            # Si el modelo fue retirado (410) o no existe (404), fallback transparente a modelo activo y probado
             fallback_payload = dict(payload)
-            fallback_payload["model"] = "meta/llama-3.2-11b-vision-instruct"
+            fallback_payload["model"] = STABLE_FALLBACK_MODEL
             response = requests.post(
                 f"{self.base_url}/chat/completions",
                 json=fallback_payload,
@@ -217,6 +250,18 @@ class NVIDIAProviderEngine:
             stream=True,
             timeout=120,
         )
+
+        STABLE_FALLBACK_MODEL = "nv-mistralai/mistral-nemo-12b-instruct"
+        if response.status_code in (404, 410) and target_model != STABLE_FALLBACK_MODEL:
+            fallback_payload = dict(payload)
+            fallback_payload["model"] = STABLE_FALLBACK_MODEL
+            response = requests.post(
+                f"{self.base_url}/chat/completions",
+                json=fallback_payload,
+                headers=headers,
+                stream=True,
+                timeout=120,
+            )
 
         for line in response.iter_lines(decode_unicode=True):
             if line:
