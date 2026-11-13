@@ -303,6 +303,95 @@ async def process_chat(request: ChatRequest, http_request: Request, user: AuthUs
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error en el servidor: {str(e)}")
 
+@app.post("/api/voice_transcribe")
+async def transcribe_voice_audio(
+    file: UploadFile = File(...),
+    language: Optional[str] = Form("es"),
+    user: AuthUser = Depends(get_current_user),
+):
+    """
+    Endpoint STT universal (especialmente para navegadores móviles iOS/Android donde Web Speech API
+    colisiona con getUserMedia o no está disponible). Usa Groq whisper-large-v3-turbo (~250ms).
+    """
+    user_id = resolve_user_id(user, "default_user")
+    check_rate_limit(f"stt:{user_id}", limit=45, window_seconds=60)
+
+    groq_key = os.getenv("GROQ_RESPONDER_API_KEY") or os.getenv("GROQ_API_KEY")
+    if not groq_key:
+        raise HTTPException(status_code=500, detail="Falta GROQ_API_KEY para transcripción de voz.")
+
+    audio_bytes = await file.read()
+    if not audio_bytes or len(audio_bytes) < 400:
+        return {"status": "success", "text": ""}
+
+    raw_name = (file.filename or "voice.webm").lower()
+    if any(raw_name.endswith(ext) for ext in (".webm", ".mp4", ".m4a", ".ogg", ".wav", ".mp3", ".mpeg")):
+        safe_filename = raw_name
+    else:
+        ctype = (file.content_type or "").lower()
+        if "mp4" in ctype or "m4a" in ctype or "aac" in ctype:
+            safe_filename = "voice.m4a"
+        elif "ogg" in ctype:
+            safe_filename = "voice.ogg"
+        elif "wav" in ctype:
+            safe_filename = "voice.wav"
+        else:
+            safe_filename = "voice.webm"
+
+    lang_code = "en" if (language or "").lower().startswith("en") else "es"
+
+    def _run_whisper() -> str:
+        from groq import Groq
+        client = Groq(api_key=groq_key)
+        try:
+            resp = client.audio.transcriptions.create(
+                file=(safe_filename, audio_bytes),
+                model="whisper-large-v3-turbo",
+                language=lang_code,
+                temperature=0.0,
+                response_format="json",
+            )
+            return getattr(resp, "text", "") or ""
+        except Exception as e:
+            print(f"[Voice STT] Fallback a whisper-large-v3 por error en turbo: {e}")
+            resp = client.audio.transcriptions.create(
+                file=(safe_filename, audio_bytes),
+                model="whisper-large-v3",
+                language=lang_code,
+                temperature=0.0,
+                response_format="json",
+            )
+            return getattr(resp, "text", "") or ""
+
+    try:
+        raw_text = await run_in_threadpool(_run_whisper)
+    except Exception as e:
+        print(f"[Voice STT] Error transcribiendo audio móvil: {e}")
+        return {"status": "error", "text": ""}
+
+    cleaned = (raw_text or "").strip()
+    lower = cleaned.lower().strip(" .,!¡?¿…")
+    # Filtrar alucinaciones típicas de Whisper cuando solo hay ruido de fondo
+    hallucinations = {
+        "",
+        "gracias",
+        "muchas gracias",
+        "gracias por ver",
+        "gracias por ver el video",
+        "subtítulos realizados por la comunidad de amara.org",
+        "subtitulos realizados por la comunidad de amara.org",
+        "subtítulos por la comunidad de amara.org",
+        "amara.org",
+        "thank you",
+        "thanks for watching",
+        "you",
+        "bye",
+    }
+    if lower in hallucinations or "amara.org" in lower or len(lower) < 2:
+        cleaned = ""
+
+    return {"status": "success", "text": cleaned}
+
 @app.post("/api/voice_chat")
 async def process_voice_chat(request: ChatRequest, http_request: Request, user: AuthUser = Depends(get_current_user)):
     user_id = resolve_user_id(user, request.user_id)
