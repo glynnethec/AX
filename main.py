@@ -184,7 +184,7 @@ async def tts_elevenlabs_sentence(sentence: str, api_key: str, language: str = "
     """Genera audio para una sola oración con ElevenLabs (en executor para no bloquear)."""
     def _sync():
         client = ElevenLabs(api_key=api_key)
-        voice_id = "ut2XM2wJyIZLTtW6lFzZ" if language == "en" else "VmejBeYhbrcTPwDniox7"
+        voice_id = "ut2XM2wJyIZLTtW6lFzZ" if language == "en" else "DY9A332o69lIyb5Cox4v"
         gen = client.text_to_speech.convert(
             text=sentence,
             voice_id=voice_id,
