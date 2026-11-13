@@ -293,9 +293,6 @@ async def process_voice_chat(request: ChatRequest, http_request: Request, user: 
         # Si el usuario ya salió de AX_voice, no se genera audio (ahorra cuota de ElevenLabs)
         await ensure_connected(http_request)
 
-        # Lanzar el Agente de Acción en paralelo para evaluar intenciones de UI
-        action_task = asyncio.create_task(run_ax_action_agent_async(user_message_text, ai_response))
-
         # ── 2. TTS CONCURRENTE POR ORACIÓN (PER USER) ──────────────────────
         use_mock_tts = request.use_mock_tts
         user_usage = get_user_tts_usage(user_id)
@@ -342,8 +339,8 @@ async def process_voice_chat(request: ChatRequest, http_request: Request, user: 
                     if chunk["type"] == "audio":
                         audio_data += chunk["data"]
 
-        # Esperar resultado del Action Agent
-        url_to_open = await action_task
+        # AX Voice es exclusivamente conversacional (sin apertura automática de URLs)
+        url_to_open = None
 
         # ── 3. RESPUESTA ─────────────────────────────────────────────────────
         audio_base64 = base64.b64encode(audio_data).decode("utf-8")
