@@ -14,8 +14,8 @@ import hashlib
 import os
 import threading
 import time
-from dataclasses import dataclass
-from typing import Dict, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import Any, Dict, Optional, Tuple
 
 import requests
 from dotenv import load_dotenv
@@ -45,6 +45,7 @@ class AuthUser:
     id: Optional[str]
     email: Optional[str] = None
     token: Optional[str] = None
+    user_metadata: Dict[str, Any] = field(default_factory=dict)
 
     @property
     def is_authenticated(self) -> bool:
@@ -97,8 +98,41 @@ def _fetch_supabase_user(token: str) -> Optional[AuthUser]:
     provider = (data.get("app_metadata") or {}).get("provider")
     if ALLOWED_PROVIDERS and provider not in ALLOWED_PROVIDERS:
         return None
-    email = data.get("email") or (data.get("user_metadata") or {}).get("email")
-    return AuthUser(id=user_id, email=email, token=token)
+    user_meta = data.get("user_metadata") if isinstance(data.get("user_metadata"), dict) else {}
+    email = data.get("email") or user_meta.get("email")
+    return AuthUser(id=user_id, email=email, token=token, user_metadata=user_meta)
+
+
+def sync_user_tts_metadata_bg(user: Optional[AuthUser], tts_usage: Dict[str, Any]) -> None:
+    """
+    Sincroniza en segundo plano el estado de cuota TTS de ElevenLabs en `user_metadata` de Supabase Auth.
+    Así el bloqueo de 48h persiste en la cuenta incluso si el servidor reinicia o el usuario cambia de navegador.
+    """
+    if not user or not user.is_authenticated or not user.token:
+        return
+
+    token = user.token
+    new_meta = dict(user.user_metadata or {})
+    new_meta["ax_tts_usage"] = tts_usage
+    updated_user = AuthUser(id=user.id, email=user.email, token=token, user_metadata=new_meta)
+    _cache_set(_token_key(token), updated_user, ttl=_CACHE_TTL_SECONDS)
+
+    def _push():
+        try:
+            requests.put(
+                f"{SUPABASE_URL}/auth/v1/user",
+                headers={
+                    "apikey": SUPABASE_ANON_KEY,
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
+                json={"data": {"ax_tts_usage": tts_usage}},
+                timeout=5,
+            )
+        except Exception as e:
+            print(f"[TTS Quota] No se pudo sincronizar metadata en Supabase: {e}")
+
+    threading.Thread(target=_push, daemon=True).start()
 
 
 async def verify_token(token: Optional[str]) -> Optional[AuthUser]:

@@ -32,7 +32,7 @@ from AX_Voice.AX_Action_Agent import run_ax_action_agent_async
 from AX_Trainer.AX_Dataset_Generator import generate_dataset_with_groq, extract_text_from_file_bytes
 from AX_LibraryModel.AX_HuggingFace_Bridge import get_curated_open_weights_catalog, search_huggingface_models, get_huggingface_model_files, HF_RESOLVE_BASE
 from models_provider.router import router as models_provider_router
-from core.auth import AuthUser, get_current_user, resolve_user_id
+from core.auth import AuthUser, get_current_user, resolve_user_id, sync_user_tts_metadata_bg
 from core.rate_limit import check_rate_limit
 from core.jobs import training_jobs, get_modal_cmd, safe_user_id, user_model_dir, user_downloads_dir, MODAL_VOLUME, MODAL_APP_NAME, BASE_DIR
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
@@ -111,8 +111,8 @@ class ChatRequest(BaseModel):
 MessageModel.model_rebuild()
 ChatRequest.model_rebuild()
 
-USAGE_FILE = "tts_usage.json"
-MAX_CHARS = 2000
+USAGE_FILE = os.path.join(BASE_DIR, "tts_usage.json")
+MAX_CHARS = 7000
 RESET_SECONDS = 48 * 3600
 _usage_lock = threading.Lock()
 
@@ -138,31 +138,105 @@ def save_all_tts_usage(all_data: dict):
     except Exception as e:
         print(f"Error saving TTS usage: {e}")
 
-def get_user_tts_usage(user_id: str) -> dict:
+def _is_entry_active(entry: dict, current_time: float) -> bool:
+    if not isinstance(entry, dict) or not entry:
+        return False
+    reset_at = entry.get("reset_at")
+    if isinstance(reset_at, (int, float)):
+        return current_time < reset_at
+    start_time = entry.get("start_time")
+    if isinstance(start_time, (int, float)):
+        return (current_time - start_time) < RESET_SECONDS
+    return False
+
+def get_user_tts_usage(user_id: str, user: Optional[AuthUser] = None) -> dict:
     with _usage_lock:
         all_data = load_all_tts_usage()
-        u_data = all_data.get(user_id, {})
         current_time = time.time()
+        email_key = f"email:{user.email.strip().lower()}" if (user and user.email) else None
 
-        start_time = u_data.get("start_time", current_time)
-        chars_used = u_data.get("chars_used", 0)
+        candidates = []
+        local_by_id = all_data.get(user_id)
+        if _is_entry_active(local_by_id, current_time):
+            candidates.append(local_by_id)
+        if email_key:
+            local_by_email = all_data.get(email_key)
+            if _is_entry_active(local_by_email, current_time):
+                candidates.append(local_by_email)
+        if user and isinstance(user.user_metadata, dict):
+            meta_usage = user.user_metadata.get("ax_tts_usage")
+            if _is_entry_active(meta_usage, current_time):
+                candidates.append(meta_usage)
 
-        if current_time - start_time > RESET_SECONDS:
+        if candidates:
+            # Elegir el registro activo más restrictivo (mayor consumo o ya agotado)
+            best = max(
+                candidates,
+                key=lambda c: (
+                    1 if (c.get("exhausted") or int(c.get("chars_used", 0)) >= MAX_CHARS) else 0,
+                    int(c.get("chars_used", 0)),
+                    float(c.get("reset_at") or (float(c.get("start_time", current_time)) + RESET_SECONDS)),
+                ),
+            )
+            start_time = float(best.get("start_time", current_time))
+            chars_used = min(MAX_CHARS, max(0, int(best.get("chars_used", 0))))
+            exhausted = bool(best.get("exhausted")) or chars_used >= MAX_CHARS
+            if exhausted:
+                chars_used = MAX_CHARS
+            reset_at = float(best.get("reset_at") or (start_time + RESET_SECONDS))
+        else:
             start_time = current_time
             chars_used = 0
-            all_data[user_id] = {"start_time": start_time, "chars_used": chars_used}
+            exhausted = False
+            reset_at = current_time + RESET_SECONDS
+
+        record = {
+            "start_time": start_time,
+            "reset_at": reset_at,
+            "chars_used": chars_used,
+            "exhausted": exhausted,
+        }
+        # Persistir si cambió o si se restauró desde Supabase metadata
+        if all_data.get(user_id) != record or (email_key and all_data.get(email_key) != record):
+            all_data[user_id] = record
+            if email_key:
+                all_data[email_key] = record
             save_all_tts_usage(all_data)
 
-        return {"start_time": start_time, "chars_used": chars_used}
+        return record
 
-def update_user_tts_usage(user_id: str, new_chars_used: int, start_time: float):
+def update_user_tts_usage(
+    user_id: str,
+    new_chars_used: int,
+    start_time: float,
+    exhausted: bool = False,
+    reset_at: Optional[float] = None,
+    user: Optional[AuthUser] = None,
+) -> dict:
     with _usage_lock:
+        current_time = time.time()
         all_data = load_all_tts_usage()
-        all_data[user_id] = {
+        clamped_chars = min(MAX_CHARS, max(0, int(new_chars_used)))
+        # Si quedan menos de 40 caracteres, ninguna respuesta cabe: cerramos el ciclo al 100% usado
+        is_exhausted = bool(exhausted) or clamped_chars >= MAX_CHARS or (MAX_CHARS - clamped_chars < 40)
+        if is_exhausted:
+            clamped_chars = MAX_CHARS
+        effective_reset_at = float(reset_at) if reset_at is not None else (
+            current_time + RESET_SECONDS if is_exhausted else start_time + RESET_SECONDS
+        )
+        record = {
             "start_time": start_time,
-            "chars_used": new_chars_used
+            "reset_at": effective_reset_at,
+            "chars_used": clamped_chars,
+            "exhausted": is_exhausted,
         }
+        all_data[user_id] = record
+        if user and user.email:
+            all_data[f"email:{user.email.strip().lower()}"] = record
         save_all_tts_usage(all_data)
+
+    sync_user_tts_metadata_bg(user, record)
+    return record
 
 def split_into_sentences(text: str) -> List[str]:
     """Divide el texto en oraciones naturales para TTS."""
@@ -294,8 +368,10 @@ async def process_voice_chat(request: ChatRequest, http_request: Request, user: 
         await ensure_connected(http_request)
 
         # ── 2. TTS CONCURRENTE POR ORACIÓN (PER USER) ──────────────────────
-        use_mock_tts = request.use_mock_tts
-        user_usage = get_user_tts_usage(user_id)
+        user_usage = get_user_tts_usage(user_id, user=user)
+        is_quota_locked = bool(user_usage.get("exhausted")) or user_usage["chars_used"] >= MAX_CHARS
+        # Si la cuenta ya agotó sus 7000 caracteres, el servidor fuerza Edge TTS durante las 48h sin importar lo que envíe el cliente
+        use_mock_tts = bool(request.use_mock_tts) or is_quota_locked
         audio_data = b""
 
         if not use_mock_tts:
@@ -309,8 +385,16 @@ async def process_voice_chat(request: ChatRequest, http_request: Request, user: 
                     audio_chunks = await asyncio.gather(*tasks)
                     audio_data = b"".join(audio_chunks)
 
-                    user_usage["chars_used"] += response_len
-                    update_user_tts_usage(user_id, user_usage["chars_used"], user_usage["start_time"])
+                    new_total = user_usage["chars_used"] + response_len
+                    reached_limit = new_total >= MAX_CHARS or (MAX_CHARS - new_total < 40)
+                    user_usage = update_user_tts_usage(
+                        user_id,
+                        new_total,
+                        user_usage["start_time"],
+                        exhausted=reached_limit,
+                        reset_at=(time.time() + RESET_SECONDS) if reached_limit else user_usage.get("reset_at"),
+                        user=user,
+                    )
                 except Exception as e:
                     print(f"Error con ElevenLabs paralelo, usando edge_tts: {e}")
                     use_mock_tts = True
@@ -318,7 +402,16 @@ async def process_voice_chat(request: ChatRequest, http_request: Request, user: 
                 if not eleven_api_key:
                     print("Falta ELEVENLABS_API_KEY. Usando edge_tts.")
                 else:
-                    print(f"Límite de ElevenLabs superado para usuario {safe_user_id(user_id)[:8]}…. Usando edge_tts.")
+                    print(f"Límite de ElevenLabs alcanzado para usuario {safe_user_id(user_id)[:8]}…. Bloqueando ElevenLabs por 48h y usando edge_tts.")
+                    # Bloquear formalmente la cuenta al 100% consumido por las próximas 48 horas para que un refresh no reactive ElevenLabs
+                    user_usage = update_user_tts_usage(
+                        user_id,
+                        MAX_CHARS,
+                        user_usage["start_time"],
+                        exhausted=True,
+                        reset_at=time.time() + RESET_SECONDS,
+                        user=user,
+                    )
                 use_mock_tts = True
 
         # Fallback edge_tts: también concurrente por oraciones
@@ -346,11 +439,12 @@ async def process_voice_chat(request: ChatRequest, http_request: Request, user: 
         audio_base64 = base64.b64encode(audio_data).decode("utf-8")
         used_engine = "edge" if use_mock_tts else "elevenlabs"
 
-        user_usage = get_user_tts_usage(user_id)
+        user_usage = get_user_tts_usage(user_id, user=user)
         current_time = time.time()
-        time_until_reset = max(0.0, RESET_SECONDS - (current_time - user_usage["start_time"]))
+        reset_at = float(user_usage.get("reset_at") or (user_usage["start_time"] + RESET_SECONDS))
+        time_until_reset = max(0.0, reset_at - current_time)
         hours_until_reset = round(time_until_reset / 3600.0, 1)
-        available_chars = max(0, MAX_CHARS - user_usage["chars_used"])
+        available_chars = 0 if user_usage.get("exhausted") else max(0, MAX_CHARS - user_usage["chars_used"])
 
         return {
             "status": "success",
@@ -361,6 +455,8 @@ async def process_voice_chat(request: ChatRequest, http_request: Request, user: 
             "max_chars": MAX_CHARS,
             "available_chars": available_chars,
             "hours_until_reset": hours_until_reset,
+            "reset_at": reset_at,
+            "exhausted": bool(user_usage.get("exhausted")),
             "url_to_open": url_to_open
         }
     except ClientDisconnected:
@@ -378,15 +474,17 @@ async def process_voice_chat(request: ChatRequest, http_request: Request, user: 
 @app.get("/api/tts_status")
 async def get_tts_status(user_id: Optional[str] = "default_user", user: AuthUser = Depends(get_current_user)):
     user_id = resolve_user_id(user, user_id)
-    user_usage = get_user_tts_usage(user_id)
+    user_usage = get_user_tts_usage(user_id, user=user)
     current_time = time.time()
 
     eleven_api_key = os.getenv("ELEVENLABS_API_KEY")
     chars_used = user_usage.get("chars_used", 0)
-    available_chars = max(0, MAX_CHARS - chars_used)
-    active_engine = "elevenlabs" if (eleven_api_key and chars_used < MAX_CHARS) else "edge"
+    exhausted = bool(user_usage.get("exhausted")) or chars_used >= MAX_CHARS
+    available_chars = 0 if exhausted else max(0, MAX_CHARS - chars_used)
+    active_engine = "elevenlabs" if (eleven_api_key and not exhausted and available_chars > 0) else "edge"
 
-    time_until_reset = max(0.0, RESET_SECONDS - (current_time - user_usage.get("start_time", current_time)))
+    reset_at = float(user_usage.get("reset_at") or (user_usage.get("start_time", current_time) + RESET_SECONDS))
+    time_until_reset = max(0.0, reset_at - current_time)
     hours_until_reset = round(time_until_reset / 3600.0, 1)
 
     return {
@@ -395,7 +493,9 @@ async def get_tts_status(user_id: Optional[str] = "default_user", user: AuthUser
         "chars_used": chars_used,
         "max_chars": MAX_CHARS,
         "available_chars": available_chars,
-        "hours_until_reset": hours_until_reset
+        "hours_until_reset": hours_until_reset,
+        "reset_at": reset_at,
+        "exhausted": exhausted,
     }
 
 # ── ENDPOINTS DE GENERACIÓN Y ENTRENAMIENTO QLORA ──────────────────────────────
