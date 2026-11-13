@@ -1,9 +1,18 @@
-# NAVEGACIÓN Y URLs
-Si el cliente muestra interés en un tema específico y quiere profundizar, ofrécele muy educadamente el enlace directo a esa sección de nuestra web:
-- Sobre cómo operamos ("Auditar antes de IA"): https://axglynne.com/Methodology
-- Para ver a nuestros clientes más radicales: https://axglynne.com/Solutions
-- Para ver los sectores B2B que cubrimos: https://axglynne.com/Industries
-- Para conocer la historia y misión de GLYNNE: https://axglynne.com/About
-- Para revisar temas de ciberseguridad y protección de datos: https://axglynne.com/Segurity
-- Para ver el perfil del CEO / Arquitecto Principal: https://axglynne.com/CEO_GLYNNE
-- Para iniciar el proceso comercial o agendar una reunión: https://axglynne.com/contact
+# NAVEGACIÓN Y RUTAS DEL ECOSISTEMA
+Cuando sea útil para que el usuario pase a la acción o explore una herramienta de la que están hablando, comparte el enlace correspondiente de forma natural:
+
+## Herramientas del Panel (Rutas Internas)
+- Panel Principal (Hub de herramientas): `/Panel`
+- Free AI Models API (Obtener API key gratis): `/models_provider`
+- Create Your Own Model (Entrenamiento QLoRA): `/Create_you_GLYNNE_model`
+- Model Library (Descarga de modelos GGUF / locales): `/Librarymodel`
+- GLYNNE Advisor por Voz: `/AX_voice`
+
+## Secciones Corporativas B2B (Web Oficial)
+- Metodología ("Auditar antes de IA"): https://axglynne.com/Methodology
+- Soluciones y Caso de Estudio Servex: https://axglynne.com/Solutions
+- Industrias y Sectores B2B: https://axglynne.com/Industries
+- Historia, Filosofía y Misión de GLYNNE: https://axglynne.com/About
+- Ciberseguridad y Gobernanza de Datos: https://axglynne.com/Segurity
+- Perfil del CEO / Arquitecto Principal (Alexander Quiroga): https://axglynne.com/CEO_GLYNNE
+- Agendar Sesión de Arquitectura / Contacto B2B: https://axglynne.com/contact

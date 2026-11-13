@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Router_Agent.py
-Agente Supervisor. Lee la intención del usuario y decide qué contexto inyectar.
+Agente Supervisor. Lee la intención del usuario (con contexto reciente) y decide qué módulos .md inyectar.
 """
 
 import os
@@ -20,56 +20,70 @@ GROQ_API_KEY = os.getenv("GROQ_ROUTER_API_KEY") or os.getenv("GROQ_API_KEY")
 
 router_llm = ChatGroq(
     temperature=0.0,
-    model_name="openai/gpt-oss-20b",
+    model_name=os.getenv("GROQ_ROUTER_MODEL", "openai/gpt-oss-20b"),
     groq_api_key=GROQ_API_KEY
 )
 
-def route_intent(user_input: str) -> List[str]:
+VALID_MODULES = {
+    "platform_tools",
+    "knowledge",
+    "about",
+    "methodology",
+    "solutions",
+    "servex",
+    "industries",
+    "onboarding",
+    "team",
+    "legal",
+    "policies",
+}
+
+def route_intent(user_input: str, recent_context: str = "") -> List[str]:
     """
-    Analiza el mensaje y devuelve los módulos requeridos en formato JSON.
+    Analiza el mensaje actual junto con el contexto reciente y devuelve los módulos requeridos.
     """
-    router_prompt = f"""Eres el motor central de enrutamiento de intenciones para el Agente de IA Operativo de GLYNNE.
-Tu tarea es analizar el mensaje del usuario y determinar qué módulos de contexto o flujos de acción se requieren para resolver su problema o responder su consulta.
+    context_block = f"\nContexto reciente de la conversación:\n{recent_context}\n" if recent_context else ""
 
-Módulos:
+    router_prompt = f"""Eres el motor de enrutamiento de contexto para el Asesor de GLYNNE.
+Analiza el último mensaje del usuario (y el contexto reciente si existe) y selecciona ÚNICAMENTE los módulos estrictamente necesarios para responder con precisión.
 
-[OPERATIVO Y RESOLUCIÓN DE PROBLEMAS - Prioriza estos para problemas/tareas]
-- support_sops (Diagnósticos, resolución de errores, solución de problemas paso a paso, manuales técnicos)
-- operations (Ejecución de tareas, estado del sistema, flujos de trabajo internos, solicitudes procesables, disparadores de llamadas a funciones)
-
-[CORPORATIVO E INFORMACIÓN - Usa solo para preguntas directas sobre la empresa]
-- knowledge (Antecedentes de la empresa, lo que hacemos, marco general)
-- legal (NIT, dirección, teléfono, registro)
-- servex (Caso de Estudio Servex, reducción de tiempo, BPO, automatización de catálogos de CET)
+Módulos disponibles:
+- platform_tools (Herramientas del Panel: Free AI Models API / Sub-API keys, Create Your Own Model / QLoRA, Model Library / GGUF-FP16-EXL2, AX Chat, AX Voice)
+- knowledge (Qué hace GLYNNE, servicios B2B principales, diferenciador frente a chatbots genéricos)
+- about (Filosofía, tesis, modelo dual: GLYNNE S.A.S. B2B vs. AX GLYNNE I+D)
+- methodology (Cómo trabajamos: Auditar antes de IA, gobernanza determinista, multi-agente, HITL)
+- solutions (Soluciones técnicas: QA Autónomo, Extracción/Orquestación de Datos, Infraestructura RAG/LLMs)
+- servex (Caso de estudio Servex US, catálogos CET, reducción del 99% en tiempo)
+- industries (Sectores cubiertos: finanzas, legal, logística, retail, salud, etc.)
+- onboarding (Cómo contratar, proceso comercial, Sesión de Arquitectura, contacto)
 - team (CEO Alexander Quiroga, liderazgo, perfil)
-- methodology (Framework, "Auditar antes de IA", determinismo, multi-agente)
-- industries (Sectores como finanzas, legal, logística, retail, etc.)
-- solutions (Soluciones técnicas, plataformas RAG y MCP, extracción de datos)
-- onboarding (Cómo contratar, pasos, sesión de arquitectura)
-- policies (Políticas de privacidad, cookies, términos de servicio)
-- about (Misión, posicionamiento de marca, "La tecnología no es una capa")
+- legal (NIT, dirección, teléfono, email, registro legal de GLYNNE S.A.S.)
+- policies (Privacidad, términos de servicio, política de cookies)
 
-Instrucciones Críticas:
-1. PRIORIZA LA RESOLUCIÓN DE PROBLEMAS: Si el usuario informa un error, pide ayuda técnica o solicita que se realice una tarea, DEBES enrutar a "support_sops" y/o "operations". Evita estrictamente enrutar a "knowledge" o "about" en estos casos para prevenir relleno corporativo.
-2. Responde ÚNICAMENTE con un array JSON puro de strings. Ej: ["support_sops", "operations"]
-3. Si el mensaje es un simple saludo o no requiere contexto extra ("Hola", "Gracias"), retorna: []
-4. NO incluyas formato Markdown (```json) ni explicaciones, solo emite el array JSON crudo.
-
-Mensaje del usuario: "{user_input}"
+Reglas:
+1. Si el usuario hace una pregunta de seguimiento ("¿y cómo funciona eso?", "cuéntame más", "¿cuál me sirve?"), usa el contexto reciente para mantener o ampliar los módulos relevantes del tema actual.
+2. Selecciona máximo 3 módulos por turno para mantener el contexto limpio y sin redundancia.
+3. Si es un saludo simple o despedida ("Hola", "Gracias", "Ok") que no pide información, retorna [].
+4. Responde ÚNICAMENTE con un array JSON válido de strings (sin Markdown ni texto adicional). Ej: ["platform_tools", "onboarding"]
+{context_block}
+Último mensaje del usuario: "{user_input}"
 """
     try:
         response = router_llm.invoke([SystemMessage(content=router_prompt)])
         content = response.content.strip()
-        
+
         if content.startswith("```json"):
-            content = content[7:-3].strip()
+            content = content[7:]
         elif content.startswith("```"):
-            content = content[3:-3].strip()
-            
+            content = content[3:]
+        if content.endswith("```"):
+            content = content[:-3]
+        content = content.strip()
+
         selected = json.loads(content)
         if isinstance(selected, list):
-            return [f"{s}.md" for s in selected]
+            return [f"{s}.md" for s in selected if isinstance(s, str) and s in VALID_MODULES]
         return []
     except Exception as e:
         print(f"[AX Router] Fallo en parseo JSON: {e}")
-        return ["about.md", "knowledge.md"]
+        return ["knowledge.md", "platform_tools.md"]

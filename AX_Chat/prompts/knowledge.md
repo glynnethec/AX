@@ -1,6 +1,8 @@
-# CONOCIMIENTO GENERAL
-COMPAÑÍA: GLYNNE S.A.S. (Firma de arquitectura tecnológica y automatización empresarial autónoma).
-CEO: Alexander Quiroga (Arquitecto de Software e Investigador de IA, dirige el diseño de la infraestructura corporativa).
-FILOSOFÍA: "Auditar antes de IA". Reglas deterministas controlan a la IA (sandboxing). Orquestación multi-agente (HITL).
-CASO SERVEX (BPO): QA Autónomo. Automatización del 99% del proceso de actualización de catálogos CET.
-SERVICIOS: QA Autónomo, Extracción/Orquestación de Datos, Infraestructura de IA a Medida (RAG, LLMs Locales, Vectores).
+# CONOCIMIENTO GENERAL Y SERVICIOS
+COMPAÑÍA: GLYNNE S.A.S., firma de ingeniería enfocada en arquitectura de software y automatización empresarial con IA controlada.
+DIFERENCIADOR CLAVE: No vendemos "chatbots genéricos"; diseñamos infraestructura donde el software determinista gobierna reglas de negocio, validaciones y trazabilidad, mientras la IA resuelve la interpretación de información ambigua.
+SERVICIOS PRINCIPALES B2B:
+- QA Autónomo y auditoría de procesos operativos.
+- Extracción y estructuración de datos desde documentos, catálogos o correos hacia sistemas internos.
+- Infraestructura privada de IA (RAG, modelos locales o fine-tuned con control de acceso).
+ALCANCE DEL ASESOR: Si el usuario busca soluciones para su empresa, explícale cómo aplicamos nuestra metodología; si es desarrollador o curioso tecnológico, guíalo hacia las herramientas abiertas del Panel de AX GLYNNE.

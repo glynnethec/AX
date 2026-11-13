@@ -20,7 +20,14 @@ from elevenlabs.client import ElevenLabs
 
 
 from AX_Chat.AX_Agent import run_ax_agent
-from AX_Voice.AX_Voice_Agent import run_ax_voice_agent, llm, SYSTEM_PROMPT, SYSTEM_PROMPT_EN
+from AX_Voice.AX_Voice_Agent import (
+    run_ax_voice_agent,
+    llm,
+    fallback_llm as voice_fallback_llm,
+    SYSTEM_PROMPT,
+    SYSTEM_PROMPT_EN,
+    build_voice_system_prompt,
+)
 from AX_Voice.AX_Action_Agent import run_ax_action_agent_async
 from AX_Trainer.AX_Dataset_Generator import generate_dataset_with_groq, extract_text_from_file_bytes
 from AX_LibraryModel.AX_HuggingFace_Bridge import get_curated_open_weights_catalog, search_huggingface_models, get_huggingface_model_files, HF_RESOLVE_BASE
@@ -98,6 +105,7 @@ class ChatRequest(BaseModel):
     messages: List[MessageModel]
     use_mock_tts: bool = False
     user_id: Optional[str] = "default_user"
+    user_name: Optional[str] = None
     language: Optional[str] = "es"
 
 MessageModel.model_rebuild()
@@ -212,8 +220,9 @@ async def process_chat(request: ChatRequest, http_request: Request, user: AuthUs
         if not langchain_msgs:
             raise HTTPException(status_code=400, detail="El historial está vacío.")
 
+        resolved_name = request.user_name or (user.email.split("@")[0] if user and user.email else None)
         # El agente es síncrono: se ejecuta fuera del event loop para no bloquear a otros usuarios
-        ai_response = await run_in_threadpool(run_ax_agent, langchain_msgs)
+        ai_response = await run_in_threadpool(run_ax_agent, langchain_msgs, resolved_name)
         return {"status": "success", "reply": ai_response}
     except HTTPException:
         raise
@@ -240,27 +249,38 @@ async def process_voice_chat(request: ChatRequest, http_request: Request, user: 
             raise HTTPException(status_code=400, detail="El historial está vacío.")
 
         # ── 1. STREAMING DEL LLM ────────────────────────────────────────────
-        # Limitar historial
-        MAX_HISTORY = 6
+        # Mantener hasta 14 mensajes (7 turnos) para preservar coherencia y evitar repeticiones
+        MAX_HISTORY = 14
         recent_history = langchain_msgs[-MAX_HISTORY:] if len(langchain_msgs) > MAX_HISTORY else langchain_msgs
-        prompt_to_use = SYSTEM_PROMPT_EN if request.language == "en" else SYSTEM_PROMPT
+        resolved_name = request.user_name or (user.email.split("@")[0] if user and user.email else None)
+        prompt_to_use = build_voice_system_prompt(language=request.language or "es", user_name=resolved_name)
         messages = [SystemMessage(content=prompt_to_use)] + recent_history
 
-        # Acumular texto en oraciones completas mientras hace stream
+        # Acumular texto en oraciones completas mientras hace stream (con fallback automático)
         full_text = ""
         sentence_buffer = ""
         sentences: List[str] = []
 
-        async for chunk in llm.astream(messages):
-            token = chunk.content
-            full_text += token
-            sentence_buffer += token
-            # Detectar fin de oración natural
-            if re.search(r'[.!?…]\s*$', sentence_buffer) or '...' in sentence_buffer:
-                candidate = sentence_buffer.strip()
-                if len(candidate) > 3:
-                    sentences.append(candidate)
-                sentence_buffer = ""
+        async def _stream_with_model(target_llm):
+            nonlocal full_text, sentence_buffer, sentences
+            full_text = ""
+            sentence_buffer = ""
+            sentences = []
+            async for chunk in target_llm.astream(messages):
+                token = chunk.content
+                full_text += token
+                sentence_buffer += token
+                if re.search(r'[.!?…]\s*$', sentence_buffer) or '...' in sentence_buffer:
+                    candidate = sentence_buffer.strip()
+                    if len(candidate) > 3:
+                        sentences.append(candidate)
+                    sentence_buffer = ""
+
+        try:
+            await _stream_with_model(llm)
+        except Exception as stream_err:
+            print(f"[Voice Chat] Fallback a voice_fallback_llm por error en modelo primario: {stream_err}")
+            await _stream_with_model(voice_fallback_llm)
 
         # Añadir el buffer restante si no terminó en puntuación
         if sentence_buffer.strip() and len(sentence_buffer.strip()) > 3:
